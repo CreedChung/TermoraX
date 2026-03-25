@@ -210,7 +210,7 @@ impl AppStore {
 
     fn test_connection_profile(&self, profile: ConnectionProfile) -> AppResult<ConnectionTestResult> {
         let result = connections::simulate_connection_test(profile, &self.persisted.connections)?;
-        ssh::default_ssh_service().build_connect_plan(&result.normalized_profile)?;
+        ssh::default_ssh_service().prepare_connection_from_profile(&result.normalized_profile)?;
         Ok(result)
     }
 
@@ -309,7 +309,7 @@ impl AppStore {
 
             connection.clone()
         };
-        ssh::default_ssh_service().build_connect_plan(&connection)?;
+        ssh::default_ssh_service().prepare_connection_from_profile(&connection)?;
 
         self.sessions.insert(0, sessions::open_simulated_session(&connection));
         self.record_activity(format!("已为 {} 打开会话。", connection.name));
@@ -505,6 +505,9 @@ mod tests {
             port: 22,
             username: "root".into(),
             auth_type: "password".into(),
+            password: "secret".into(),
+            private_key_path: String::new(),
+            private_key_passphrase: String::new(),
             group: "默认分组".into(),
             tags: vec![],
             note: "".into(),
@@ -546,7 +549,7 @@ mod tests {
         let dir = temp_config_dir("session-actions");
         let state = AppState::new(dir).expect("state should initialize");
         let opened = state
-            .open_session("conn-prod-app-01")
+            .open_session("conn-stage-bastion")
             .expect("session should open");
         let session_id = opened.sessions[0].id.clone();
 
@@ -571,12 +574,15 @@ mod tests {
     fn app_state_closes_other_sessions() {
         let dir = temp_config_dir("close-others");
         let state = AppState::new(dir).expect("state should initialize");
+        state
+            .save_connection_profile(profile("conn-extra-password"))
+            .expect("extra connection should save");
         let first = state
-            .open_session("conn-prod-app-01")
+            .open_session("conn-stage-bastion")
             .expect("first session should open");
         let keep_id = first.sessions[0].id.clone();
         let second = state
-            .open_session("conn-stage-bastion")
+            .open_session("conn-extra-password")
             .expect("second session should open");
         assert_eq!(second.sessions.len(), 2);
 

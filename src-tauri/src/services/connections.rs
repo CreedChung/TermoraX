@@ -86,6 +86,7 @@ fn normalize_profile(mut profile: ConnectionProfile) -> AppResult<ConnectionProf
     profile.host = profile.host.trim().to_string();
     profile.username = profile.username.trim().to_string();
     profile.auth_type = normalize_auth_type(&profile.auth_type);
+    profile.private_key_path = profile.private_key_path.trim().to_string();
     profile.group = normalize_fallback_field(profile.group, "默认分组");
     profile.note = profile.note.trim().to_string();
     profile.tags = normalize_tags(profile.tags);
@@ -104,6 +105,17 @@ fn normalize_profile(mut profile: ConnectionProfile) -> AppResult<ConnectionProf
 
     if profile.port == 0 {
         return Err(AppError::new("invalid_connection_port", "端口必须在 1 到 65535 之间"));
+    }
+
+    if profile.auth_type == "password" && profile.password.trim().is_empty() {
+        return Err(AppError::new("invalid_connection_password", "密码认证需要填写密码"));
+    }
+
+    if profile.auth_type == "privateKey" && profile.private_key_path.is_empty() {
+        return Err(AppError::new(
+            "invalid_connection_private_key_path",
+            "私钥认证需要填写私钥路径",
+        ));
     }
 
     Ok(profile)
@@ -199,6 +211,9 @@ mod tests {
             port: 22,
             username: " Deploy ".into(),
             auth_type: " private_key ".into(),
+            password: String::new(),
+            private_key_path: " ~/.ssh/id_test ".into(),
+            private_key_passphrase: " passphrase ".into(),
             group: "  ".into(),
             tags: vec![" api ".into(), "API".into(), "".into()],
             note: "  note  ".into(),
@@ -214,6 +229,8 @@ mod tests {
         assert_eq!(normalized.host, "Example.COM");
         assert_eq!(normalized.username, "Deploy");
         assert_eq!(normalized.auth_type, "privateKey");
+        assert_eq!(normalized.private_key_path, "~/.ssh/id_test");
+        assert_eq!(normalized.private_key_passphrase, " passphrase ");
         assert_eq!(normalized.group, "默认分组");
         assert_eq!(normalized.note, "note");
         assert_eq!(normalized.tags, vec!["api"]);
@@ -250,6 +267,26 @@ mod tests {
             normalize_profile(invalid).expect_err("port should fail").code,
             "invalid_connection_port"
         );
+
+        let mut invalid = sample_profile();
+        invalid.private_key_path = String::new();
+        assert_eq!(
+            normalize_profile(invalid)
+                .expect_err("private key path should fail")
+                .code,
+            "invalid_connection_private_key_path"
+        );
+
+        let mut invalid = sample_profile();
+        invalid.auth_type = "password".into();
+        invalid.password = String::new();
+        invalid.private_key_path = String::new();
+        assert_eq!(
+            normalize_profile(invalid)
+                .expect_err("password should fail")
+                .code,
+            "invalid_connection_password"
+        );
     }
 
     #[test]
@@ -261,6 +298,9 @@ mod tests {
             port: 22,
             username: "deploy".into(),
             auth_type: "password".into(),
+            password: "secret".into(),
+            private_key_path: String::new(),
+            private_key_passphrase: String::new(),
             group: "默认分组".into(),
             tags: vec![],
             note: "".into(),
@@ -292,6 +332,9 @@ mod tests {
             port: 22,
             username: "deploy".into(),
             auth_type: "password".into(),
+            password: "secret".into(),
+            private_key_path: String::new(),
+            private_key_passphrase: String::new(),
             group: "默认分组".into(),
             tags: vec![],
             note: "".into(),

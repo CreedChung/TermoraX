@@ -145,11 +145,38 @@ impl RusshSshService {
             auth,
         })
     }
+
+    /// Resolves credentials directly from a persisted connection profile.
+    pub fn prepare_connection_from_profile(
+        &self,
+        profile: &ConnectionProfile,
+    ) -> AppResult<PreparedSshConnection> {
+        let credentials = match parse_auth_method(&profile.auth_type)? {
+            SshAuthMethod::Password => SshCredentials::Password {
+                password: profile.password.clone(),
+            },
+            SshAuthMethod::PrivateKey => SshCredentials::PrivateKey {
+                private_key_path: PathBuf::from(profile.private_key_path.clone()),
+                passphrase: optional_secret(&profile.private_key_passphrase),
+            },
+        };
+
+        self.prepare_connection(profile, credentials)
+    }
 }
 
 /// Returns the default SSH service used by the current backend runtime.
 pub fn default_ssh_service() -> RusshSshService {
     RusshSshService::new()
+}
+
+fn optional_secret(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(value.to_string())
+    }
 }
 
 fn parse_auth_method(value: &str) -> AppResult<SshAuthMethod> {
@@ -199,6 +226,9 @@ mod tests {
             port: 22,
             username: "deploy".into(),
             auth_type: auth_type.into(),
+            password: String::new(),
+            private_key_path: String::new(),
+            private_key_passphrase: String::new(),
             group: "默认分组".into(),
             tags: vec![],
             note: String::new(),
@@ -285,5 +315,22 @@ mod tests {
             .expect_err("missing key should fail");
 
         assert_eq!(error.code, "ssh_private_key_load_failed");
+    }
+
+    #[test]
+    fn prepare_connection_from_profile_uses_password_field() {
+        let prepared = default_ssh_service()
+            .prepare_connection_from_profile(&ConnectionProfile {
+                password: "secret".into(),
+                private_key_path: String::new(),
+                private_key_passphrase: String::new(),
+                ..profile("password")
+            })
+            .expect("password profile should prepare");
+
+        match prepared.auth {
+            PreparedSshAuth::Password { password } => assert_eq!(password, "secret"),
+            PreparedSshAuth::PrivateKey { .. } => panic!("expected password auth"),
+        }
     }
 }

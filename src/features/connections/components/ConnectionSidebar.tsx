@@ -18,6 +18,9 @@ const emptyDraft = {
   authType: "password" as ConnectionAuthType,
   note: "",
   tags: "",
+  password: "",
+  privateKeyPath: "",
+  privateKeyPassphrase: "",
 };
 
 export function ConnectionSidebar({ controller }: ConnectionSidebarProps) {
@@ -48,6 +51,9 @@ export function ConnectionSidebar({ controller }: ConnectionSidebarProps) {
         .split(",")
         .map((item) => item.trim())
         .filter(Boolean),
+      password: draft.password,
+      privateKeyPath: draft.privateKeyPath,
+      privateKeyPassphrase: draft.privateKeyPassphrase,
     };
   }
 
@@ -72,6 +78,9 @@ export function ConnectionSidebar({ controller }: ConnectionSidebarProps) {
       authType: profile.authType,
       note: profile.note,
       tags: profile.tags.join(", "),
+      password: profile.password ?? "",
+      privateKeyPath: profile.privateKeyPath ?? "",
+      privateKeyPassphrase: profile.privateKeyPassphrase ?? "",
     });
   }
 
@@ -317,6 +326,44 @@ export function ConnectionSidebar({ controller }: ConnectionSidebarProps) {
               </select>
             </label>
           </div>
+
+          {draft.authType === "password" ? (
+            <label>
+              <span>{t("connections.field.password")}</span>
+              <input
+                type="password"
+                onChange={(event) => setDraft((current) => ({ ...current, password: event.target.value }))}
+                placeholder={t("connections.placeholder.password")}
+                value={draft.password}
+              />
+              {state.connectionValidationErrors.password ? (
+                <span className="field-error">{state.connectionValidationErrors.password}</span>
+              ) : null}
+            </label>
+          ) : (
+            <>
+              <label>
+                <span>{t("connections.field.privateKeyPath")}</span>
+                <input
+                  onChange={(event) => setDraft((current) => ({ ...current, privateKeyPath: event.target.value }))}
+                  placeholder={t("connections.placeholder.privateKeyPath")}
+                  value={draft.privateKeyPath}
+                />
+                {state.connectionValidationErrors.privateKeyPath ? (
+                  <span className="field-error">{state.connectionValidationErrors.privateKeyPath}</span>
+                ) : null}
+              </label>
+              <label>
+                <span>{t("connections.field.privateKeyPassphrase")}</span>
+                <input
+                  type="password"
+                  onChange={(event) => setDraft((current) => ({ ...current, privateKeyPassphrase: event.target.value }))}
+                  placeholder={t("connections.placeholder.privateKeyPassphrase")}
+                  value={draft.privateKeyPassphrase}
+                />
+              </label>
+            </>
+          )}
 
           <label>
             <span>{t("connections.field.tags")}</span>

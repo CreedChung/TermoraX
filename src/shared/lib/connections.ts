@@ -16,6 +16,9 @@ export interface DraftConnectionInput {
   tags?: string[];
   note?: string;
   lastConnectedAt?: string | null;
+  password?: string;
+  privateKeyPath?: string;
+  privateKeyPassphrase?: string;
 }
 
 /**
@@ -34,6 +37,9 @@ export function normalizeConnectionInput(input: DraftConnectionInput): Connectio
     tags: (input.tags ?? []).map((item) => item.trim()).filter(Boolean),
     note: input.note?.trim() ?? "",
     lastConnectedAt: input.lastConnectedAt ?? null,
+    password: input.password?.trim() ?? "",
+    privateKeyPath: input.privateKeyPath?.trim() ?? "",
+    privateKeyPassphrase: input.privateKeyPassphrase?.trim() ?? "",
   };
 }
 
@@ -54,6 +60,14 @@ export function validateConnectionProfile(profile: ConnectionProfile): Connectio
 
   if (!Number.isInteger(profile.port) || profile.port < 1 || profile.port > 65535) {
     errors.port = t("connections.validation.portInvalid");
+  }
+
+  if (profile.authType === "password" && !profile.password?.trim()) {
+    errors.password = t("connections.validation.passwordRequired");
+  }
+
+  if (profile.authType === "privateKey" && !profile.privateKeyPath?.trim()) {
+    errors.privateKeyPath = t("connections.validation.privateKeyRequired");
   }
 
   return errors;

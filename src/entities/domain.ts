@@ -18,6 +18,9 @@ export interface ConnectionProfile {
   tags: string[];
   note: string;
   lastConnectedAt: string | null;
+  password?: string;
+  privateKeyPath?: string;
+  privateKeyPassphrase?: string;
 }
 
 export interface ConnectionValidationErrors {
@@ -25,6 +28,8 @@ export interface ConnectionValidationErrors {
   host?: string;
   port?: string;
   username?: string;
+  password?: string;
+  privateKeyPath?: string;
 }
 
 export interface ConnectionDuplicateWarning {
