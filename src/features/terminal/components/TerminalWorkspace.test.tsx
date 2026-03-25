@@ -1,10 +1,41 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import type { SessionTab } from "../../../entities/domain";
 import { defaultAppSettings } from "../../settings/model/defaults";
 import type { WorkspaceController, WorkspaceViewState } from "../../../app/useWorkspaceApp";
 import { TerminalWorkspace } from "./TerminalWorkspace";
+
+vi.mock("@xterm/addon-fit", () => ({
+  FitAddon: class MockFitAddon {
+    fit() {}
+  },
+}));
+
+vi.mock("@xterm/xterm", () => ({
+  Terminal: class MockTerminal {
+    cols = 120;
+    rows = 40;
+    options = {
+      theme: undefined,
+      fontFamily: undefined,
+      fontSize: undefined,
+      lineHeight: undefined,
+      cursorStyle: undefined,
+    };
+
+    loadAddon() {}
+    open() {}
+    reset() {}
+    write() {}
+    scrollToBottom() {}
+    dispose() {}
+  },
+}));
+
+afterEach(() => {
+  vi.clearAllMocks();
+});
 
 const sampleSession: SessionTab = {
   id: "session-1",
@@ -102,6 +133,7 @@ describe("TerminalWorkspace", () => {
     expect(clearSessionOutput).toHaveBeenCalledWith(sampleSession.id);
     expect(closeOtherSessions).toHaveBeenCalledWith(sampleSession.id);
     expect(screen.getByText("终端尺寸：120 × 40")).toBeInTheDocument();
+    expect(screen.getByTestId("terminal-host")).toBeInTheDocument();
   });
 
   test("submits command input and clears the field", async () => {

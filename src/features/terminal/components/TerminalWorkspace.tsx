@@ -1,9 +1,12 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { WorkspaceController } from "../../../app/useWorkspaceApp";
 import { StatusBadge } from "../../../shared/components/StatusBadge";
 import { Panel } from "../../../shared/components/Panel";
 import { t } from "../../../shared/i18n";
 import { formatTimestamp } from "../../../shared/lib/time";
+import { FitAddon } from "@xterm/addon-fit";
+import { Terminal } from "@xterm/xterm";
+import "@xterm/xterm/css/xterm.css";
 
 interface TerminalWorkspaceProps {
   controller: WorkspaceController;
@@ -101,16 +104,17 @@ export function TerminalWorkspace({ controller }: TerminalWorkspaceProps) {
                   {t("terminal.closeOthers")}
                 </button>
               </div>
-              <pre
-                className={`terminal-output terminal-output--${state.settings.terminal.theme}`}
-                style={{
-                  fontFamily: state.settings.terminal.fontFamily,
-                  fontSize: `${state.settings.terminal.fontSize}px`,
-                  lineHeight: state.settings.terminal.lineHeight,
-                }}
-              >
-                {activeSession.lastOutput}
-              </pre>
+              <div className="terminal-host">
+                <TerminalHost
+                  cursorStyle={state.settings.terminal.cursorStyle}
+                  output={activeSession.lastOutput}
+                  onResize={(cols, rows) => void controller.resizeSession(activeSession.id, cols, rows)}
+                  theme={state.settings.terminal.theme}
+                  fontFamily={state.settings.terminal.fontFamily}
+                  fontSize={state.settings.terminal.fontSize}
+                  lineHeight={state.settings.terminal.lineHeight}
+                />
+              </div>
               <form
                 className="terminal-input-row"
                 onSubmit={(event) => {
@@ -143,4 +147,125 @@ export function TerminalWorkspace({ controller }: TerminalWorkspaceProps) {
       </div>
     </Panel>
   );
+}
+
+type TerminalTheme = "midnight" | "sand";
+
+const terminalColorPalettes: Record<TerminalTheme, { background: string; foreground: string }> = {
+  midnight: {
+    background: "#0c1014",
+    foreground: "#dce8d8",
+  },
+  sand: {
+    background: "#efe7d9",
+    foreground: "#2a2418",
+  },
+};
+
+interface TerminalHostProps {
+  output: string;
+  theme: TerminalTheme;
+  fontFamily: string;
+  fontSize: number;
+  lineHeight: number;
+  cursorStyle: "block" | "line";
+  onResize?: (cols: number, rows: number) => void;
+}
+
+export function TerminalHost({
+  output,
+  theme,
+  fontFamily,
+  fontSize,
+  lineHeight,
+  cursorStyle,
+  onResize,
+}: TerminalHostProps) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const terminalRef = useRef<Terminal | null>(null);
+  const fitAddonRef = useRef<FitAddon | null>(null);
+  const lastOutputRef = useRef<string>("");
+  const lastResizeRef = useRef<string>("");
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) {
+      return;
+    }
+
+    const terminal = new Terminal({
+      fontFamily,
+      fontSize,
+      lineHeight,
+      cursorBlink: true,
+      cursorStyle: cursorStyle === "line" ? "bar" : "block",
+      disableStdin: true,
+      scrollback: 1000,
+      theme: terminalColorPalettes[theme],
+    });
+    const fitAddon = new FitAddon();
+    terminal.loadAddon(fitAddon);
+    terminal.open(container);
+    fitAddon.fit();
+
+    terminalRef.current = terminal;
+    fitAddonRef.current = fitAddon;
+
+    const handleResize = () => {
+      fitAddon.fit();
+      const sizeKey = `${terminal.cols}x${terminal.rows}`;
+
+      if (terminal.cols > 0 && terminal.rows > 0 && sizeKey !== lastResizeRef.current) {
+        lastResizeRef.current = sizeKey;
+        onResize?.(terminal.cols, terminal.rows);
+      }
+    };
+
+    window.addEventListener("resize", handleResize);
+    handleResize();
+
+    return () => {
+      window.removeEventListener("resize", handleResize);
+      terminal.dispose();
+      terminalRef.current = null;
+      fitAddonRef.current = null;
+    };
+  }, [cursorStyle, fontFamily, fontSize, lineHeight, onResize, theme]);
+
+  useEffect(() => {
+    const terminal = terminalRef.current;
+    if (!terminal) {
+      return;
+    }
+
+    terminal.options.theme = terminalColorPalettes[theme];
+  }, [theme]);
+
+  useEffect(() => {
+    const terminal = terminalRef.current;
+    if (!terminal) {
+      return;
+    }
+    terminal.options.fontFamily = fontFamily;
+    terminal.options.fontSize = fontSize;
+    terminal.options.lineHeight = lineHeight;
+    terminal.options.cursorStyle = cursorStyle === "line" ? "bar" : "block";
+  }, [cursorStyle, fontFamily, fontSize, lineHeight]);
+
+  useEffect(() => {
+    const terminal = terminalRef.current;
+    if (!terminal || lastOutputRef.current === output) {
+      return;
+    }
+    terminal.reset();
+    const normalized = output.replace(/\r?\n/g, "\r\n");
+    if (normalized) {
+      terminal.write(normalized);
+    }
+    terminal.scrollToBottom();
+    lastOutputRef.current = output;
+    fitAddonRef.current?.fit();
+  }, [output]);
+
+  return <div className="terminal-host__surface" ref={containerRef} data-testid="terminal-host" />;
 }

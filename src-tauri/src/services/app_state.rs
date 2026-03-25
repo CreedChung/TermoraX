@@ -13,7 +13,7 @@ use crate::{
         ConnectionProfile, ConnectionTestResult, ConnectionValidationResult, PersistedState, RemoteFileEntry,
         SessionTab,
     },
-    services::{connections, sessions},
+    services::{connections, sessions, ssh},
 };
 
 /// Shared backend state managed by Tauri.
@@ -209,7 +209,9 @@ impl AppStore {
     }
 
     fn test_connection_profile(&self, profile: ConnectionProfile) -> AppResult<ConnectionTestResult> {
-        connections::simulate_connection_test(profile, &self.persisted.connections)
+        let result = connections::simulate_connection_test(profile, &self.persisted.connections)?;
+        ssh::default_ssh_service().build_connect_plan(&result.normalized_profile)?;
+        Ok(result)
     }
 
     fn import_connection_profiles_json(&mut self, payload: &str) -> AppResult<ConnectionImportResult> {
@@ -307,6 +309,7 @@ impl AppStore {
 
             connection.clone()
         };
+        ssh::default_ssh_service().build_connect_plan(&connection)?;
 
         self.sessions.insert(0, sessions::open_simulated_session(&connection));
         self.record_activity(format!("已为 {} 打开会话。", connection.name));
