@@ -158,9 +158,7 @@ describe("TerminalWorkspace", () => {
 
     expect(screen.getByText("会话区域已准备就绪")).toBeInTheDocument();
     expect(
-      screen.getByText(
-        "从左侧连接栏打开一个连接。当前构建使用模拟传输层，但真实的 Tauri 命令边界和状态流已经就位。",
-      ),
+      screen.getByText("从左侧连接栏打开一个连接，即可开始远程终端工作区会话。"),
     ).toBeInTheDocument();
   });
 });

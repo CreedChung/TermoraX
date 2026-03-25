@@ -8,6 +8,7 @@ import type {
   ConnectionProfile,
   ConnectionTestResult,
   RemoteFileEntry,
+  SessionEvent,
 } from "../../entities/domain";
 import { defaultAppSettings, starterConnections, starterSnippets } from "../../features/settings/model/defaults";
 import {
@@ -17,6 +18,7 @@ import {
 } from "../../shared/lib/connections";
 import { createId } from "../../shared/lib/id";
 import { getLocaleState, t } from "../../shared/i18n";
+import { listenSessionEvents } from "./sessionEvents";
 
 declare global {
   interface Window {
@@ -486,6 +488,12 @@ export const desktopClient = {
   },
   listRemoteEntries(sessionId: string) {
     return callOrMock<RemoteFileEntry[]>("list_remote_entries", { sessionId });
+  },
+  subscribeSessionEvents(listener: (event: SessionEvent) => void) {
+    if (!isTauriRuntime()) {
+      return Promise.resolve(() => {});
+    }
+    return listenSessionEvents(listener);
   },
 };
 

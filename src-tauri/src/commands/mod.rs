@@ -1,4 +1,4 @@
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use crate::{
     error::AppResult,
@@ -94,8 +94,12 @@ pub fn reset_settings(state: State<'_, AppState>) -> AppResult<BootstrapState> {
 }
 
 #[tauri::command]
-pub fn open_session(state: State<'_, AppState>, connection_id: String) -> AppResult<BootstrapState> {
-    state.open_session(&connection_id)
+pub fn open_session(
+    app_handle: AppHandle,
+    state: State<'_, AppState>,
+    connection_id: String,
+) -> AppResult<BootstrapState> {
+    state.open_session(&app_handle, &connection_id)
 }
 
 #[tauri::command]
@@ -105,8 +109,12 @@ pub fn close_session(state: State<'_, AppState>, session_id: String) -> AppResul
 
 /// Reconnects an existing simulated session.
 #[tauri::command]
-pub fn reconnect_session(state: State<'_, AppState>, session_id: String) -> AppResult<BootstrapState> {
-    state.reconnect_session(&session_id)
+pub fn reconnect_session(
+    app_handle: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+) -> AppResult<BootstrapState> {
+    state.reconnect_session(&app_handle, &session_id)
 }
 
 /// Clears the output transcript for a simulated session.

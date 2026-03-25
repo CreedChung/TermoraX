@@ -1,2 +1,27 @@
-#[allow(dead_code)]
-pub const SESSION_OUTPUT_EVENT: &str = "workspace://session-output";
+/// Event emitted when a live SSH session produces terminal output or lifecycle changes.
+pub const SESSION_EVENT: &str = "workspace://session";
+
+use serde::Serialize;
+
+/// Incremental terminal output payload emitted by the backend.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionOutputEventPayload {
+    pub kind: &'static str,
+    pub session_id: String,
+    pub stream: &'static str,
+    pub chunk: String,
+    pub occurred_at: String,
+}
+
+/// Session lifecycle payload emitted by the backend.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionStatusEventPayload {
+    pub kind: &'static str,
+    pub session_id: String,
+    pub status: String,
+    pub message: Option<String>,
+    pub error_code: Option<String>,
+    pub occurred_at: String,
+}

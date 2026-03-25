@@ -66,6 +66,27 @@ export interface SessionTab {
   updatedAt: string;
 }
 
+export type SessionOutputStream = "stdout" | "stderr";
+
+export interface SessionOutputEvent {
+  kind: "output";
+  sessionId: string;
+  stream: SessionOutputStream;
+  chunk: string;
+  occurredAt: string;
+}
+
+export interface SessionStatusEvent {
+  kind: "status";
+  sessionId: string;
+  status?: SessionStatus;
+  message: string | null;
+  errorCode: string | null;
+  occurredAt: string;
+}
+
+export type SessionEvent = SessionOutputEvent | SessionStatusEvent;
+
 export interface RemoteFileEntry {
   name: string;
   path: string;

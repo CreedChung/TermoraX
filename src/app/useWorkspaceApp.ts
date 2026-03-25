@@ -11,6 +11,7 @@ import type {
   ConnectionValidationErrors,
   RemoteFileEntry,
   RightPanelId,
+  SessionEvent,
   SessionTab,
 } from "../entities/domain";
 import { desktopClient } from "../integrations/tauri/client";
@@ -23,6 +24,7 @@ import {
 } from "../shared/lib/connections";
 import { createId } from "../shared/lib/id";
 import { t } from "../shared/i18n";
+import { mergeSessionEvent } from "./sessionEvents";
 
 interface WorkspaceState extends BootstrapState {
   isLoading: boolean;
@@ -170,6 +172,44 @@ export function useWorkspaceApp() {
       cancelled = true;
     };
   }, [state.activeSessionId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let unsubscribe: (() => void) | null = null;
+
+    const listener = (event: SessionEvent) => {
+      if (cancelled) {
+        return;
+      }
+      setState((current) => {
+        const updatedSessions = mergeSessionEvent(current.sessions, event);
+        if (updatedSessions === current.sessions) {
+          return current;
+        }
+        return { ...current, sessions: updatedSessions };
+      });
+    };
+
+    void desktopClient
+      .subscribeSessionEvents(listener)
+      .then((unlisten) => {
+        if (cancelled) {
+          void unlisten();
+          return;
+        }
+        unsubscribe = () => {
+          void unlisten();
+        };
+      })
+      .catch((error) => {
+        console.error("session event stream error", error);
+      });
+
+    return () => {
+      cancelled = true;
+      unsubscribe?.();
+    };
+  }, []);
 
   const selectedConnection = useMemo(
     () => state.connections.find((item) => item.id === state.selectedConnectionId) ?? null,

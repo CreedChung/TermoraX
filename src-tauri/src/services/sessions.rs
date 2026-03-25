@@ -3,11 +3,16 @@ use crate::{
     models::{ConnectionProfile, SessionTab},
 };
 
-const DEFAULT_TERMINAL_COLS: u16 = 120;
-const DEFAULT_TERMINAL_ROWS: u16 = 32;
+pub const DEFAULT_TERMINAL_COLS: u16 = 120;
+pub const DEFAULT_TERMINAL_ROWS: u16 = 32;
 
-/// Creates a new simulated SSH session for the provided connection profile.
-pub fn open_simulated_session(connection: &ConnectionProfile) -> SessionTab {
+/// Creates a connected SSH session snapshot backed by a real or simulated transport.
+pub fn open_connected_session(
+    connection: &ConnectionProfile,
+    initial_output: String,
+    terminal_cols: u16,
+    terminal_rows: u16,
+) -> SessionTab {
     let now = now_millis();
 
     SessionTab {
@@ -17,19 +22,31 @@ pub fn open_simulated_session(connection: &ConnectionProfile) -> SessionTab {
         protocol: "ssh".into(),
         status: "connected".into(),
         current_path: Some(format!("/home/{}", connection.username)),
-        last_output: format!(
-            "已连接到 {}@{}:{}\n\n[模拟器] SSH 传输层当前仍为桩实现。\n[模拟器] Rust 命令边界、持久化与工作台生命周期已经接通。",
-            connection.username, connection.host, connection.port
-        ),
-        terminal_cols: DEFAULT_TERMINAL_COLS,
-        terminal_rows: DEFAULT_TERMINAL_ROWS,
+        last_output: initial_output,
+        terminal_cols,
+        terminal_rows,
         created_at: now.clone(),
         updated_at: now,
     }
 }
 
+/// Creates a new simulated SSH session for the provided connection profile.
+#[allow(dead_code)]
+pub fn open_simulated_session(connection: &ConnectionProfile) -> SessionTab {
+    open_connected_session(
+        connection,
+        format!(
+            "已连接到 {}@{}:{}\n\n[模拟器] SSH 传输层当前仍为桩实现。\n[模拟器] Rust 命令边界、持久化与工作台生命周期已经接通。",
+            connection.username, connection.host, connection.port
+        ),
+        DEFAULT_TERMINAL_COLS,
+        DEFAULT_TERMINAL_ROWS,
+    )
+}
+
 /// Appends simulated terminal input to a session transcript.
-pub fn send_session_input(sessions: &mut [SessionTab], session_id: &str, input: &str) -> AppResult<String> {
+#[allow(dead_code)]
+pub fn append_simulated_input(sessions: &mut [SessionTab], session_id: &str, input: &str) -> AppResult<String> {
     let session = find_session_mut(sessions, session_id)?;
 
     session.last_output = format!(
@@ -42,7 +59,39 @@ pub fn send_session_input(sessions: &mut [SessionTab], session_id: &str, input: 
     Ok(session.title.clone())
 }
 
+/// Appends terminal output to an existing session buffer.
+pub fn append_session_output(sessions: &mut [SessionTab], session_id: &str, chunk: &str) -> AppResult<()> {
+    let session = find_session_mut(sessions, session_id)?;
+    session.last_output.push_str(chunk);
+    session.updated_at = now_millis();
+
+    Ok(())
+}
+
+/// Updates the current status for a tracked session.
+pub fn set_session_status(
+    sessions: &mut [SessionTab],
+    session_id: &str,
+    status: &str,
+    message: Option<&str>,
+) -> AppResult<String> {
+    let session = find_session_mut(sessions, session_id)?;
+    session.status = status.to_string();
+    if let Some(message) = message {
+        if !message.is_empty() {
+            if !session.last_output.is_empty() {
+                session.last_output.push_str("\r\n\r\n");
+            }
+            session.last_output.push_str(message);
+        }
+    }
+    session.updated_at = now_millis();
+
+    Ok(session.title.clone())
+}
+
 /// Reconnects an existing simulated session and appends a reconnect marker.
+#[allow(dead_code)]
 pub fn reconnect_session(
     sessions: &mut [SessionTab],
     session_id: &str,
@@ -63,7 +112,7 @@ pub fn reconnect_session(
 /// Clears the simulated output buffer while keeping a minimal marker.
 pub fn clear_session_output(sessions: &mut [SessionTab], session_id: &str) -> AppResult<String> {
     let session = find_session_mut(sessions, session_id)?;
-    session.last_output = "[模拟器] 会话输出已清空。".into();
+    session.last_output = "会话输出已清空。".into();
     session.updated_at = now_millis();
 
     Ok(session.title.clone())
@@ -144,8 +193,9 @@ fn now_millis() -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        clear_session_output, close_other_sessions, open_simulated_session, reconnect_session, resize_session,
-        send_session_input,
+        append_session_output, append_simulated_input, clear_session_output, close_other_sessions,
+        open_connected_session, open_simulated_session, reconnect_session, resize_session, set_session_status,
+        DEFAULT_TERMINAL_COLS, DEFAULT_TERMINAL_ROWS,
     };
     use crate::models::ConnectionProfile;
 
@@ -171,8 +221,8 @@ mod tests {
     fn open_session_uses_default_terminal_size() {
         let session = open_simulated_session(&connection());
 
-        assert_eq!(session.terminal_cols, 120);
-        assert_eq!(session.terminal_rows, 32);
+        assert_eq!(session.terminal_cols, DEFAULT_TERMINAL_COLS);
+        assert_eq!(session.terminal_rows, DEFAULT_TERMINAL_ROWS);
         assert!(session.last_output.contains("已连接到"));
     }
 
@@ -181,10 +231,43 @@ mod tests {
         let mut sessions = vec![open_simulated_session(&connection())];
         let session_id = sessions[0].id.clone();
 
-        let title = send_session_input(&mut sessions, &session_id, "ls -la").expect("input should succeed");
+        let title =
+            append_simulated_input(&mut sessions, &session_id, "ls -la").expect("input should succeed");
 
         assert_eq!(title, "测试主机");
         assert!(sessions[0].last_output.contains("$ ls -la"));
+    }
+
+    #[test]
+    fn open_connected_session_supports_custom_initial_output() {
+        let session = open_connected_session(&connection(), "ready".into(), 80, 24);
+
+        assert_eq!(session.last_output, "ready");
+        assert_eq!(session.terminal_cols, 80);
+        assert_eq!(session.terminal_rows, 24);
+    }
+
+    #[test]
+    fn append_session_output_updates_transcript() {
+        let mut sessions = vec![open_simulated_session(&connection())];
+        let session_id = sessions[0].id.clone();
+
+        append_session_output(&mut sessions, &session_id, "\r\nhello").expect("append should succeed");
+
+        assert!(sessions[0].last_output.ends_with("\r\nhello"));
+    }
+
+    #[test]
+    fn set_session_status_appends_message() {
+        let mut sessions = vec![open_simulated_session(&connection())];
+        let session_id = sessions[0].id.clone();
+
+        let title = set_session_status(&mut sessions, &session_id, "disconnected", Some("连接已断开"))
+            .expect("status update should succeed");
+
+        assert_eq!(title, "测试主机");
+        assert_eq!(sessions[0].status, "disconnected");
+        assert!(sessions[0].last_output.contains("连接已断开"));
     }
 
     #[test]
@@ -204,7 +287,7 @@ mod tests {
 
         clear_session_output(&mut sessions, &session_id).expect("clear should succeed");
 
-        assert_eq!(sessions[0].last_output, "[模拟器] 会话输出已清空。");
+        assert_eq!(sessions[0].last_output, "会话输出已清空。");
     }
 
     #[test]

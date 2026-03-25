@@ -84,7 +84,7 @@ const messages: Record<AppLocale, MessageSchema> = {
     "connections.deleteCancel": "取消",
     "terminal.title": "工作台",
     "terminal.emptyTitle": "会话区域已准备就绪",
-    "terminal.emptyBody": "从左侧连接栏打开一个连接。当前构建使用模拟传输层，但真实的 Tauri 命令边界和状态流已经就位。",
+    "terminal.emptyBody": "从左侧连接栏打开一个连接，即可开始远程终端工作区会话。",
     "terminal.lastUpdate": "最近更新：{time}",
     "terminal.commandPlaceholder": "输入命令",
     "terminal.send": "发送",
