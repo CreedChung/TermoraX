@@ -1,0 +1,35 @@
+use tauri::Manager;
+
+use crate::{
+    commands,
+    services::app_state::AppState,
+};
+
+pub fn run() {
+    tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
+        .setup(|app| {
+            let config_dir = app
+                .path()
+                .app_config_dir()
+                .map_err(|error| -> Box<dyn std::error::Error> { Box::new(error) })?;
+            app.manage(AppState::new(config_dir)?);
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            commands::get_bootstrap_state,
+            commands::save_connection_profile,
+            commands::delete_connection_profile,
+            commands::save_command_snippet,
+            commands::delete_command_snippet,
+            commands::save_settings,
+            commands::reset_settings,
+            commands::open_session,
+            commands::close_session,
+            commands::send_session_input,
+            commands::run_snippet_on_session,
+            commands::list_remote_entries
+        ])
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
+}

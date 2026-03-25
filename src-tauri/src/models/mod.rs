@@ -1,0 +1,189 @@
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionProfile {
+    pub id: String,
+    pub name: String,
+    pub host: String,
+    pub port: u16,
+    pub username: String,
+    pub auth_type: String,
+    pub group: String,
+    pub tags: Vec<String>,
+    pub note: String,
+    pub last_connected_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionTab {
+    pub id: String,
+    pub connection_id: String,
+    pub title: String,
+    pub protocol: String,
+    pub status: String,
+    pub current_path: Option<String>,
+    pub last_output: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteFileEntry {
+    pub name: String,
+    pub path: String,
+    pub kind: String,
+    pub size: u64,
+    pub modified_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommandSnippet {
+    pub id: String,
+    pub name: String,
+    pub command: String,
+    pub description: String,
+    pub group: String,
+    pub tags: Vec<String>,
+    pub favorite: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalPreferences {
+    pub font_family: String,
+    pub font_size: u16,
+    pub line_height: f32,
+    pub theme: String,
+    pub cursor_style: String,
+    pub copy_on_select: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceLayout {
+    pub sidebar_collapsed: bool,
+    pub right_panel: String,
+    pub right_panel_visible: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppSettings {
+    pub terminal: TerminalPreferences,
+    pub workspace: WorkspaceLayout,
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            terminal: TerminalPreferences {
+                font_family: "\"JetBrains Mono\", \"Cascadia Code\", Consolas, monospace".into(),
+                font_size: 14,
+                line_height: 1.6,
+                theme: "midnight".into(),
+                cursor_style: "block".into(),
+                copy_on_select: false,
+            },
+            workspace: WorkspaceLayout {
+                sidebar_collapsed: false,
+                right_panel: "files".into(),
+                right_panel_visible: true,
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtensionContribution {
+    pub id: String,
+    pub title: String,
+    pub kind: String,
+    pub description: String,
+    pub entrypoint: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivityEntry {
+    pub id: String,
+    pub title: String,
+    pub timestamp: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BootstrapState {
+    pub connections: Vec<ConnectionProfile>,
+    pub sessions: Vec<SessionTab>,
+    pub snippets: Vec<CommandSnippet>,
+    pub settings: AppSettings,
+    pub extensions: Vec<ExtensionContribution>,
+    pub activity: Vec<ActivityEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PersistedState {
+    pub connections: Vec<ConnectionProfile>,
+    pub snippets: Vec<CommandSnippet>,
+    pub settings: AppSettings,
+}
+
+impl Default for PersistedState {
+    fn default() -> Self {
+        Self {
+            connections: vec![
+                ConnectionProfile {
+                    id: "conn-prod-app-01".into(),
+                    name: "prod-app-01".into(),
+                    host: "10.10.0.12".into(),
+                    port: 22,
+                    username: "deploy".into(),
+                    auth_type: "privateKey".into(),
+                    group: "Production".into(),
+                    tags: vec!["api".into(), "cn-sha".into()],
+                    note: "Primary application node".into(),
+                    last_connected_at: None,
+                },
+                ConnectionProfile {
+                    id: "conn-stage-bastion".into(),
+                    name: "stage-bastion".into(),
+                    host: "10.20.1.5".into(),
+                    port: 22,
+                    username: "ops".into(),
+                    auth_type: "password".into(),
+                    group: "Staging".into(),
+                    tags: vec!["bastion".into()],
+                    note: "Jump host for staging network".into(),
+                    last_connected_at: None,
+                },
+            ],
+            snippets: vec![
+                CommandSnippet {
+                    id: "snippet-tail-api".into(),
+                    name: "Tail API Logs".into(),
+                    command: "tail -f /var/log/app/api.log".into(),
+                    description: "Follow the main API service log.".into(),
+                    group: "Diagnostics".into(),
+                    tags: vec!["logs".into(), "api".into()],
+                    favorite: true,
+                },
+                CommandSnippet {
+                    id: "snippet-disk-check".into(),
+                    name: "Disk Usage".into(),
+                    command: "df -h".into(),
+                    description: "Check disk consumption on the current host.".into(),
+                    group: "Diagnostics".into(),
+                    tags: vec!["disk".into()],
+                    favorite: false,
+                },
+            ],
+            settings: AppSettings::default(),
+        }
+    }
+}
