@@ -20,6 +20,33 @@ export interface ConnectionProfile {
   lastConnectedAt: string | null;
 }
 
+export interface ConnectionValidationErrors {
+  name?: string;
+  host?: string;
+  port?: string;
+  username?: string;
+}
+
+export interface ConnectionDuplicateWarning {
+  duplicateConnectionId: string;
+  duplicateName: string;
+  message: string;
+}
+
+export interface ConnectionTestResult {
+  ok: boolean;
+  message: string;
+  warnings: string[];
+  duplicateConnectionId: string | null;
+  normalizedProfile: ConnectionProfile;
+}
+
+export interface ConnectionExportResult {
+  content: string;
+  count: number;
+  exportedAt: string;
+}
+
 export interface SessionTab {
   id: string;
   connectionId: string;
@@ -91,4 +118,12 @@ export interface BootstrapState {
   settings: AppSettings;
   extensions: ExtensionContribution[];
   activity: ActivityEntry[];
+}
+
+export interface ConnectionImportResult {
+  state: BootstrapState;
+  imported: number;
+  skipped: number;
+  duplicateCount: number;
+  message: string;
 }

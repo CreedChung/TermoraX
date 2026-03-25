@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+/// A saved SSH connection profile shown in the workspace UI.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConnectionProfile {
@@ -13,6 +14,47 @@ pub struct ConnectionProfile {
     pub tags: Vec<String>,
     pub note: String,
     pub last_connected_at: Option<String>,
+}
+
+/// Result returned by backend-side profile validation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionValidationResult {
+    pub ok: bool,
+    pub normalized_profile: ConnectionProfile,
+    pub warnings: Vec<String>,
+    pub duplicate_connection_id: Option<String>,
+}
+
+/// Result returned by the simulated P0 connection test command.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionTestResult {
+    pub ok: bool,
+    pub message: String,
+    pub warnings: Vec<String>,
+    pub duplicate_connection_id: Option<String>,
+    pub normalized_profile: ConnectionProfile,
+}
+
+/// Result returned after importing connection profiles from JSON.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionImportResult {
+    pub state: BootstrapState,
+    pub imported: usize,
+    pub skipped: usize,
+    pub duplicate_count: usize,
+    pub message: String,
+}
+
+/// Result returned after exporting connection profiles into JSON.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionExportResult {
+    pub content: String,
+    pub count: usize,
+    pub exported_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

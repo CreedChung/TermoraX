@@ -3,13 +3,24 @@ import type {
   AppSettings,
   BootstrapState,
   CommandSnippet,
+  ConnectionDuplicateWarning,
+  ConnectionExportResult,
+  ConnectionImportResult,
   ConnectionProfile,
+  ConnectionTestResult,
+  ConnectionValidationErrors,
   RemoteFileEntry,
   RightPanelId,
   SessionTab,
 } from "../entities/domain";
 import { desktopClient } from "../integrations/tauri/client";
 import { defaultAppSettings } from "../features/settings/model/defaults";
+import {
+  findConnectionDuplicate,
+  hasValidationErrors,
+  normalizeConnectionInput,
+  validateConnectionProfile,
+} from "../shared/lib/connections";
 import { createId } from "../shared/lib/id";
 import { t } from "../shared/i18n";
 
@@ -19,6 +30,10 @@ interface WorkspaceState extends BootstrapState {
   selectedConnectionId: string | null;
   activeSessionId: string | null;
   remoteEntries: RemoteFileEntry[];
+  connectionValidationErrors: ConnectionValidationErrors;
+  connectionDuplicateWarning: ConnectionDuplicateWarning | null;
+  connectionTestResult: ConnectionTestResult | null;
+  connectionStatusMessage: string | null;
 }
 
 const initialState: WorkspaceState = {
@@ -33,6 +48,10 @@ const initialState: WorkspaceState = {
   selectedConnectionId: null,
   activeSessionId: null,
   remoteEntries: [],
+  connectionValidationErrors: {},
+  connectionDuplicateWarning: null,
+  connectionTestResult: null,
+  connectionStatusMessage: null,
 };
 
 function deriveNextSelection(snapshot: BootstrapState, currentConnectionId: string | null, currentSessionId: string | null) {
@@ -50,6 +69,50 @@ function deriveNextSelection(snapshot: BootstrapState, currentConnectionId: stri
 
 export function useWorkspaceApp() {
   const [state, setState] = useState<WorkspaceState>(initialState);
+
+  function setConnectionFeedback(input: {
+    errors?: ConnectionValidationErrors;
+    duplicateWarning?: ConnectionDuplicateWarning | null;
+    testResult?: ConnectionTestResult | null;
+    statusMessage?: string | null;
+  }) {
+    setState((current) => ({
+      ...current,
+      connectionValidationErrors: input.errors ?? current.connectionValidationErrors,
+      connectionDuplicateWarning:
+        input.duplicateWarning === undefined ? current.connectionDuplicateWarning : input.duplicateWarning,
+      connectionTestResult: input.testResult === undefined ? current.connectionTestResult : input.testResult,
+      connectionStatusMessage: input.statusMessage === undefined ? current.connectionStatusMessage : input.statusMessage,
+    }));
+  }
+
+  function clearConnectionFeedback() {
+    setState((current) => ({
+      ...current,
+      connectionValidationErrors: {},
+      connectionDuplicateWarning: null,
+      connectionTestResult: null,
+      connectionStatusMessage: null,
+    }));
+  }
+
+  function prepareConnectionProfile(input: Partial<ConnectionProfile>) {
+    // Frontend validation mirrors backend rules so the form can fail fast
+    // before invoking Tauri, while the backend still remains authoritative.
+    const normalized = normalizeConnectionInput({
+      ...input,
+      id: input.id ?? createId("conn"),
+    });
+    const validationErrors = validateConnectionProfile(normalized);
+    const duplicateWarning = findConnectionDuplicate(state.connections, normalized);
+
+    return {
+      profile: normalized,
+      validationErrors,
+      duplicateWarning,
+      isValid: !hasValidationErrors(validationErrors),
+    };
+  }
 
   function applySnapshot(snapshot: BootstrapState) {
     startTransition(() => {
@@ -121,6 +184,7 @@ export function useWorkspaceApp() {
     state,
     selectedConnection,
     activeSession,
+    clearConnectionFeedback,
     selectConnection(connectionId: string) {
       setState((current) => ({ ...current, selectedConnectionId: connectionId }));
     },
@@ -128,23 +192,96 @@ export function useWorkspaceApp() {
       setState((current) => ({ ...current, activeSessionId: sessionId }));
     },
     async saveConnectionProfile(input: Partial<ConnectionProfile>) {
-      const profile: ConnectionProfile = {
-        id: input.id ?? createId("conn"),
-        name: input.name?.trim() || "未命名主机",
-        host: input.host?.trim() || "127.0.0.1",
-        port: input.port ?? 22,
-        username: input.username?.trim() || "root",
-        authType: input.authType ?? "password",
-        group: input.group?.trim() || "默认分组",
-        tags: input.tags ?? [],
-        note: input.note?.trim() || "",
-        lastConnectedAt: input.lastConnectedAt ?? null,
-      };
+      const { profile, validationErrors, duplicateWarning, isValid } = prepareConnectionProfile(input);
+
+      setConnectionFeedback({
+        errors: validationErrors,
+        duplicateWarning,
+        testResult: null,
+        statusMessage: null,
+      });
+
+      if (!isValid) {
+        return false;
+      }
+
       await runMutation(() => desktopClient.saveConnectionProfile(profile));
-      setState((current) => ({ ...current, selectedConnectionId: profile.id }));
+      setState((current) => ({
+        ...current,
+        selectedConnectionId: profile.id,
+        connectionValidationErrors: {},
+        connectionDuplicateWarning: duplicateWarning,
+      }));
+      return true;
+    },
+    async testConnectionProfile(input: Partial<ConnectionProfile>) {
+      const { profile, validationErrors, duplicateWarning, isValid } = prepareConnectionProfile(input);
+
+      setConnectionFeedback({
+        errors: validationErrors,
+        duplicateWarning,
+        testResult: null,
+        statusMessage: null,
+      });
+
+      if (!isValid) {
+        return null;
+      }
+
+      try {
+        const result = await desktopClient.testConnectionProfile(profile);
+        setConnectionFeedback({
+          errors: {},
+          duplicateWarning,
+          testResult: result,
+          statusMessage: result.message,
+        });
+        return result;
+      } catch (error) {
+        setState((current) => ({
+          ...current,
+          error: error instanceof Error ? error.message : t("errors.unexpectedWorkspace"),
+        }));
+        return null;
+      }
     },
     async deleteConnectionProfile(connectionId: string) {
       await runMutation(() => desktopClient.deleteConnectionProfile(connectionId));
+      clearConnectionFeedback();
+    },
+    async importConnectionProfilesFromJson(content: string) {
+      try {
+        const result: ConnectionImportResult = await desktopClient.importConnectionProfilesFromJson(content);
+        applySnapshot(result.state);
+        setConnectionFeedback({
+          errors: {},
+          duplicateWarning: null,
+          testResult: null,
+          statusMessage: result.message,
+        });
+        return result;
+      } catch (error) {
+        setState((current) => ({
+          ...current,
+          error: error instanceof Error ? error.message : t("connections.importInvalid"),
+        }));
+        return null;
+      }
+    },
+    async exportConnectionProfiles(): Promise<ConnectionExportResult | null> {
+      try {
+        const result = await desktopClient.exportConnectionProfiles();
+        setConnectionFeedback({
+          statusMessage: t("connections.exportSuccess", { count: result.count }),
+        });
+        return result;
+      } catch (error) {
+        setState((current) => ({
+          ...current,
+          error: error instanceof Error ? error.message : t("errors.connectionExportFailed"),
+        }));
+        return null;
+      }
     },
     async openSession(connectionId: string) {
       await runMutation(() => desktopClient.openSession(connectionId));

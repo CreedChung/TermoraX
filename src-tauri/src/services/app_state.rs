@@ -9,24 +9,59 @@ use crate::{
     error::{AppError, AppResult},
     extensions::builtin_extensions,
     models::{
-        ActivityEntry, BootstrapState, CommandSnippet, ConnectionProfile, PersistedState, RemoteFileEntry,
+        ActivityEntry, BootstrapState, CommandSnippet, ConnectionExportResult, ConnectionImportResult,
+        ConnectionProfile, ConnectionTestResult, ConnectionValidationResult, PersistedState, RemoteFileEntry,
         SessionTab,
     },
+    services::connections,
 };
 
+/// Shared backend state managed by Tauri.
 pub struct AppState {
     store: Mutex<AppStore>,
 }
 
 impl AppState {
+    /// Creates the application state rooted at the Tauri config directory.
     pub fn new(config_dir: PathBuf) -> AppResult<Self> {
         Ok(Self {
             store: Mutex::new(AppStore::load(config_dir)?),
         })
     }
 
+    /// Returns a snapshot consumed by the frontend bootstrap flow.
     pub fn snapshot(&self) -> AppResult<BootstrapState> {
         Ok(self.store.lock()?.snapshot())
+    }
+
+    /// Validates and normalizes a connection profile without persisting it.
+    pub fn validate_connection_profile(
+        &self,
+        profile: ConnectionProfile,
+    ) -> AppResult<ConnectionValidationResult> {
+        let store = self.store.lock()?;
+        store.validate_connection_profile(profile)
+    }
+
+    /// Runs the current simulated P0 connection test flow.
+    pub fn test_connection_profile(&self, profile: ConnectionProfile) -> AppResult<ConnectionTestResult> {
+        let store = self.store.lock()?;
+        store.test_connection_profile(profile)
+    }
+
+    /// Imports connection profiles from a JSON payload.
+    pub fn import_connection_profiles_json(
+        &self,
+        payload: &str,
+    ) -> AppResult<ConnectionImportResult> {
+        let mut store = self.store.lock()?;
+        store.import_connection_profiles_json(payload)
+    }
+
+    /// Exports all connection profiles as a JSON string.
+    pub fn export_connection_profiles_json(&self) -> AppResult<ConnectionExportResult> {
+        let store = self.store.lock()?;
+        store.export_connection_profiles_json()
     }
 
     pub fn save_connection_profile(&self, profile: ConnectionProfile) -> AppResult<BootstrapState> {
@@ -138,9 +173,64 @@ impl AppStore {
         }
     }
 
+    fn validate_connection_profile(
+        &self,
+        profile: ConnectionProfile,
+    ) -> AppResult<ConnectionValidationResult> {
+        connections::validate_profile(profile, &self.persisted.connections)
+    }
+
+    fn test_connection_profile(&self, profile: ConnectionProfile) -> AppResult<ConnectionTestResult> {
+        connections::simulate_connection_test(profile, &self.persisted.connections)
+    }
+
+    fn import_connection_profiles_json(&mut self, payload: &str) -> AppResult<ConnectionImportResult> {
+        let (imported_profiles, skipped, duplicate_count) =
+            connections::import_profiles_json(payload, &self.persisted.connections)?;
+
+        for profile in &imported_profiles {
+            upsert_by_id(&mut self.persisted.connections, profile.clone());
+        }
+
+        let imported = imported_profiles.len();
+        self.record_activity(format!(
+            "已导入 {} 个连接配置，跳过 {} 个导入内重复项，检测到 {} 个与现有配置重复的连接。",
+            imported, skipped, duplicate_count
+        ));
+        self.persist()?;
+
+        Ok(ConnectionImportResult {
+            state: self.snapshot(),
+            imported,
+            skipped,
+            duplicate_count,
+            message: format!(
+                "已导入 {} 个连接配置，跳过 {} 个导入内重复项，检测到 {} 个与现有配置重复的连接。",
+                imported, skipped, duplicate_count
+            ),
+        })
+    }
+
+    fn export_connection_profiles_json(&self) -> AppResult<ConnectionExportResult> {
+        let content = connections::export_profiles_json(&self.persisted.connections)?;
+
+        Ok(ConnectionExportResult {
+            content,
+            count: self.persisted.connections.len(),
+            exported_at: now_iso(),
+        })
+    }
+
     fn save_connection_profile(&mut self, profile: ConnectionProfile) -> AppResult<()> {
-        upsert_by_id(&mut self.persisted.connections, profile.clone());
-        self.record_activity(format!("已保存连接配置 {}。", profile.name));
+        let validation = self.validate_connection_profile(profile)?;
+        upsert_by_id(
+            &mut self.persisted.connections,
+            validation.normalized_profile.clone(),
+        );
+        self.record_activity(format!(
+            "已保存连接配置 {}。",
+            validation.normalized_profile.name
+        ));
         self.persist()
     }
 
@@ -356,4 +446,63 @@ fn now_iso() -> String {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis().to_string())
         .unwrap_or_else(|_| "0".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{env, fs, path::PathBuf};
+
+    use super::AppState;
+    use crate::models::ConnectionProfile;
+
+    fn temp_config_dir(name: &str) -> PathBuf {
+        let dir = env::temp_dir().join(format!("termorax-tests-{}-{}", name, std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("temp dir should be created");
+        dir
+    }
+
+    fn profile(id: &str) -> ConnectionProfile {
+        ConnectionProfile {
+            id: id.into(),
+            name: "测试主机".into(),
+            host: "10.0.0.1".into(),
+            port: 22,
+            username: "root".into(),
+            auth_type: "password".into(),
+            group: "默认分组".into(),
+            tags: vec![],
+            note: "".into(),
+            last_connected_at: None,
+        }
+    }
+
+    #[test]
+    fn app_state_imports_and_exports_profiles() {
+        let dir = temp_config_dir("import-export");
+        let state = AppState::new(dir).expect("state should initialize");
+        let payload = serde_json::to_string(&vec![profile("conn-test-import")]).expect("json should serialize");
+
+        let import_result = state
+            .import_connection_profiles_json(&payload)
+            .expect("import should succeed");
+        let exported = state
+            .export_connection_profiles_json()
+            .expect("export should succeed");
+
+        assert_eq!(import_result.imported, 1);
+        assert_eq!(exported.count, 3);
+        assert!(exported.content.contains("conn-test-import"));
+    }
+
+    #[test]
+    fn app_state_validates_connection_profiles() {
+        let dir = temp_config_dir("validate");
+        let state = AppState::new(dir).expect("state should initialize");
+        let result = state
+            .validate_connection_profile(profile("conn-validate"))
+            .expect("validation should succeed");
+
+        assert_eq!(result.normalized_profile.name, "测试主机");
+    }
 }

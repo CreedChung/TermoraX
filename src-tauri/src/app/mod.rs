@@ -18,6 +18,10 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_bootstrap_state,
+            commands::validate_connection_profile,
+            commands::test_connection_profile,
+            commands::import_connection_profiles_json,
+            commands::export_connection_profiles_json,
             commands::save_connection_profile,
             commands::delete_connection_profile,
             commands::save_command_snippet,

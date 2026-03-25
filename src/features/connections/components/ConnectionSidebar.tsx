@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { ChangeEvent, FormEvent, useMemo, useRef, useState } from "react";
 import type { ConnectionAuthType, ConnectionProfile } from "../../../entities/domain";
 import type { WorkspaceController } from "../../../app/useWorkspaceApp";
 import { Panel } from "../../../shared/components/Panel";
 import { t } from "../../../shared/i18n";
+import { detectDuplicateConnections, groupConnections } from "../model/connection-utils";
 
 interface ConnectionSidebarProps {
   controller: WorkspaceController;
@@ -22,9 +23,46 @@ const emptyDraft = {
 export function ConnectionSidebar({ controller }: ConnectionSidebarProps) {
   const { state, selectedConnection } = controller;
   const [draft, setDraft] = useState(emptyDraft);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const groupedConnections = useMemo(
+    () => groupConnections(state.connections, searchTerm),
+    [state.connections, searchTerm],
+  );
+  const duplicateEntries = detectDuplicateConnections(state.connections);
+
+  function buildDraftProfile(): Partial<ConnectionProfile> {
+    return {
+      id: selectedConnection?.id,
+      name: draft.name,
+      host: draft.host,
+      port: Number(draft.port || 22),
+      username: draft.username,
+      group: draft.group,
+      authType: draft.authType,
+      note: draft.note,
+      tags: draft.tags
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean),
+    };
+  }
+
+  // Keep group collapse local to the panel so filtering does not mutate global app state.
+  function toggleGroup(group: string) {
+    setCollapsedGroups((current) => ({
+      ...current,
+      [group]: !current[group],
+    }));
+  }
 
   function loadProfile(profile: ConnectionProfile) {
     controller.selectConnection(profile.id);
+    controller.clearConnectionFeedback();
+    setConfirmDeleteId(null);
     setDraft({
       name: profile.name,
       host: profile.host,
@@ -37,33 +75,164 @@ export function ConnectionSidebar({ controller }: ConnectionSidebarProps) {
     });
   }
 
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const didSave = await controller.saveConnectionProfile(buildDraftProfile());
+
+    if (didSave) {
+      setDraft(emptyDraft);
+    }
+  }
+
+  async function handleDeleteConfirm() {
+    if (!selectedConnection) {
+      return;
+    }
+
+    await controller.deleteConnectionProfile(selectedConnection.id);
+    setConfirmDeleteId(null);
+    setDraft(emptyDraft);
+  }
+
+  async function handleExport() {
+    const result = await controller.exportConnectionProfiles();
+
+    if (!result) {
+      return;
+    }
+
+    // Blob download works in both browser fallback mode and the Tauri webview.
+    const url = URL.createObjectURL(new Blob([result.content], { type: "application/json;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `termorax-connections-${result.exportedAt}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function handleImport(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+
+    if (!file) {
+      return;
+    }
+
+    const content = await file.text();
+    await controller.importConnectionProfilesFromJson(content);
+    event.target.value = "";
+  }
+
   return (
     <div className="sidebar-stack">
       <Panel
         title={t("connections.title")}
         subtitle={t("connections.subtitle", { count: state.connections.length })}
         actions={
-          <button className="ghost-button" onClick={() => setDraft(emptyDraft)} type="button">
+          <button
+            className="ghost-button"
+            onClick={() => {
+              controller.clearConnectionFeedback();
+              setDraft(emptyDraft);
+              setConfirmDeleteId(null);
+            }}
+            type="button"
+          >
             {t("connections.new")}
           </button>
         }
       >
-        <div className="connection-list">
-          {state.connections.map((profile) => (
-            <button
-              key={profile.id}
-              className={`connection-card ${state.selectedConnectionId === profile.id ? "is-active" : ""}`}
-              onClick={() => loadProfile(profile)}
-              type="button"
-            >
-              <span className="connection-card__title">{profile.name}</span>
-              <span className="connection-card__meta">
-                {profile.group} · {profile.username}@{profile.host}
-              </span>
-              <span className="connection-card__tags">{profile.tags.join("  ")}</span>
+        <input hidden accept="application/json" onChange={handleImport} ref={fileInputRef} type="file" />
+
+        <div className="connection-panel-tools">
+          <div className="connection-search">
+            <input
+              onChange={(event) => setSearchTerm(event.currentTarget.value)}
+              placeholder={t("connections.searchPlaceholder")}
+              value={searchTerm}
+            />
+            <button className="ghost-button" onClick={() => setSearchTerm("")} type="button">
+              {t("connections.clear")}
             </button>
-          ))}
+          </div>
+
+          <div className="connection-panel-actions">
+            <button className="ghost-button" onClick={() => fileInputRef.current?.click()} type="button">
+              {t("connections.import")}
+            </button>
+            <button className="ghost-button" onClick={() => void handleExport()} type="button">
+              {t("connections.export")}
+            </button>
+            <button className="ghost-button" onClick={() => void controller.testConnectionProfile(buildDraftProfile())} type="button">
+              {t("connections.test")}
+            </button>
+          </div>
         </div>
+
+        {state.connectionStatusMessage ? <div className="info-banner">{state.connectionStatusMessage}</div> : null}
+        {state.connectionDuplicateWarning ? (
+          <div className="warning-banner">{state.connectionDuplicateWarning.message}</div>
+        ) : null}
+
+        {duplicateEntries.length ? (
+          <div className="warning-banner">
+            <p>发现重复连接配置，请检查 host:port@user：</p>
+            <ul>
+              {duplicateEntries.map((entry) => (
+                <li key={entry}>{entry}</li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+
+        {groupedConnections.length === 0 ? (
+          <div className="empty-panel">
+            <p>{t("connections.searchEmpty")}</p>
+          </div>
+        ) : (
+          groupedConnections.map(({ group, entries }) => {
+            const isCollapsed = collapsedGroups[group];
+
+            return (
+              <section className="connection-group" key={group}>
+                <header className="connection-group__header" onClick={() => toggleGroup(group)}>
+                  <strong>{group}</strong>
+                  <div className="button-row">
+                    <span>{entries.length} 个</span>
+                    <button
+                      className="ghost-button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        toggleGroup(group);
+                      }}
+                      type="button"
+                    >
+                      {isCollapsed ? "展开" : "折叠"}
+                    </button>
+                  </div>
+                </header>
+
+                {!isCollapsed ? (
+                  <div className="connection-list">
+                    {entries.map((profile) => (
+                      <button
+                        key={profile.id}
+                        className={`connection-card ${state.selectedConnectionId === profile.id ? "is-active" : ""}`}
+                        onClick={() => loadProfile(profile)}
+                        type="button"
+                      >
+                        <span className="connection-card__title">{profile.name}</span>
+                        <span className="connection-card__meta">
+                          {profile.group} · {profile.username}@{profile.host}
+                        </span>
+                        <span className="connection-card__tags">{profile.tags.join("  ")}</span>
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </section>
+            );
+          })
+        )}
       </Panel>
 
       <Panel
@@ -73,39 +242,8 @@ export function ConnectionSidebar({ controller }: ConnectionSidebarProps) {
             ? t("connections.editorEditing", { name: selectedConnection.name })
             : t("connections.editorCreate")
         }
-        actions={
-          selectedConnection ? (
-            <button
-              className="danger-button"
-              onClick={() => void controller.deleteConnectionProfile(selectedConnection.id)}
-              type="button"
-            >
-              {t("connections.delete")}
-            </button>
-          ) : null
-        }
       >
-        <form
-          className="stack-form"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void controller.saveConnectionProfile({
-              id: selectedConnection?.id,
-              name: draft.name,
-              host: draft.host,
-              port: Number(draft.port || 22),
-              username: draft.username,
-              group: draft.group,
-              authType: draft.authType,
-              note: draft.note,
-              tags: draft.tags
-                .split(",")
-                .map((item) => item.trim())
-                .filter(Boolean),
-            });
-            setDraft(emptyDraft);
-          }}
-        >
+        <form className="stack-form" onSubmit={handleSubmit}>
           <label>
             <span>{t("connections.field.name")}</span>
             <input
@@ -113,7 +251,11 @@ export function ConnectionSidebar({ controller }: ConnectionSidebarProps) {
               placeholder="生产应用-01"
               value={draft.name}
             />
+            {state.connectionValidationErrors.name ? (
+              <span className="field-error">{state.connectionValidationErrors.name}</span>
+            ) : null}
           </label>
+
           <label>
             <span>{t("connections.field.host")}</span>
             <input
@@ -121,7 +263,11 @@ export function ConnectionSidebar({ controller }: ConnectionSidebarProps) {
               placeholder="10.10.0.12"
               value={draft.host}
             />
+            {state.connectionValidationErrors.host ? (
+              <span className="field-error">{state.connectionValidationErrors.host}</span>
+            ) : null}
           </label>
+
           <div className="form-grid">
             <label>
               <span>{t("connections.field.port")}</span>
@@ -130,7 +276,11 @@ export function ConnectionSidebar({ controller }: ConnectionSidebarProps) {
                 placeholder="22"
                 value={draft.port}
               />
+              {state.connectionValidationErrors.port ? (
+                <span className="field-error">{state.connectionValidationErrors.port}</span>
+              ) : null}
             </label>
+
             <label>
               <span>{t("connections.field.user")}</span>
               <input
@@ -138,8 +288,12 @@ export function ConnectionSidebar({ controller }: ConnectionSidebarProps) {
                 placeholder="deploy"
                 value={draft.username}
               />
+              {state.connectionValidationErrors.username ? (
+                <span className="field-error">{state.connectionValidationErrors.username}</span>
+              ) : null}
             </label>
           </div>
+
           <div className="form-grid">
             <label>
               <span>{t("connections.field.group")}</span>
@@ -149,6 +303,7 @@ export function ConnectionSidebar({ controller }: ConnectionSidebarProps) {
                 value={draft.group}
               />
             </label>
+
             <label>
               <span>{t("connections.field.auth")}</span>
               <select
@@ -162,6 +317,7 @@ export function ConnectionSidebar({ controller }: ConnectionSidebarProps) {
               </select>
             </label>
           </div>
+
           <label>
             <span>{t("connections.field.tags")}</span>
             <input
@@ -170,6 +326,7 @@ export function ConnectionSidebar({ controller }: ConnectionSidebarProps) {
               value={draft.tags}
             />
           </label>
+
           <label>
             <span>{t("connections.field.note")}</span>
             <textarea
@@ -179,6 +336,7 @@ export function ConnectionSidebar({ controller }: ConnectionSidebarProps) {
               value={draft.note}
             />
           </label>
+
           <div className="button-row">
             <button className="primary-button" type="submit">
               {t("connections.save")}
@@ -192,8 +350,28 @@ export function ConnectionSidebar({ controller }: ConnectionSidebarProps) {
                 {t("connections.openSession")}
               </button>
             ) : null}
+            {selectedConnection ? (
+              <button className="danger-button" onClick={() => setConfirmDeleteId(selectedConnection.id)} type="button">
+                {t("connections.delete")}
+              </button>
+            ) : null}
           </div>
         </form>
+
+        {confirmDeleteId ? (
+          <div className="danger-zone">
+            <strong>{t("connections.deleteConfirmTitle")}</strong>
+            <p>{t("connections.deleteConfirmBody")}</p>
+            <div className="button-row">
+              <button className="danger-button" onClick={() => void handleDeleteConfirm()} type="button">
+                {t("connections.deleteConfirmAction")}
+              </button>
+              <button className="ghost-button" onClick={() => setConfirmDeleteId(null)} type="button">
+                {t("connections.deleteCancel")}
+              </button>
+            </div>
+          </div>
+        ) : null}
       </Panel>
     </div>
   );

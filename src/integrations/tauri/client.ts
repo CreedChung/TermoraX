@@ -3,10 +3,18 @@ import type {
   AppSettings,
   BootstrapState,
   CommandSnippet,
+  ConnectionExportResult,
+  ConnectionImportResult,
   ConnectionProfile,
+  ConnectionTestResult,
   RemoteFileEntry,
 } from "../../entities/domain";
 import { defaultAppSettings, starterConnections, starterSnippets } from "../../features/settings/model/defaults";
+import {
+  findConnectionDuplicate,
+  normalizeConnectionInput,
+  validateConnectionProfile,
+} from "../../shared/lib/connections";
 import { createId } from "../../shared/lib/id";
 import { getLocaleState, t } from "../../shared/i18n";
 
@@ -127,6 +135,40 @@ function createMockSession(connectionId: string): BootstrapState {
   return cloneState();
 }
 
+function buildTestResult(profile: ConnectionProfile): ConnectionTestResult {
+  const normalizedProfile = normalizeConnectionInput(profile);
+  const duplicate = findConnectionDuplicate(mockState.connections, normalizedProfile);
+  const validationErrors = validateConnectionProfile(normalizedProfile);
+
+  if (Object.values(validationErrors).some(Boolean)) {
+    throw new Error(Object.values(validationErrors).filter(Boolean).join(" "));
+  }
+
+  return {
+    ok: true,
+    message: duplicate ? t("connections.testDuplicate") : t("connections.testSuccess"),
+    warnings: duplicate ? [duplicate.message] : [],
+    duplicateConnectionId: duplicate?.duplicateConnectionId ?? null,
+    normalizedProfile,
+  };
+}
+
+function sanitizeImportedProfiles(content: string) {
+  if (!content.trim()) {
+    throw new Error(t("errors.connectionImportEmpty"));
+  }
+
+  const parsed = JSON.parse(content) as unknown;
+
+  if (!Array.isArray(parsed)) {
+    throw new Error(t("connections.importInvalid"));
+  }
+
+  return parsed
+    .map((item) => normalizeConnectionInput(item as ConnectionProfile))
+    .filter((item) => item.name || item.host || item.username);
+}
+
 async function callOrMock<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   if (isTauriRuntime()) {
     return invoke<T>(command, args);
@@ -136,13 +178,25 @@ async function callOrMock<T>(command: string, args?: Record<string, unknown>): P
     case "get_bootstrap_state":
       return cloneState() as T;
     case "save_connection_profile": {
-      const profile = args?.profile as ConnectionProfile;
+      const profile = normalizeConnectionInput(args?.profile as ConnectionProfile);
+      const validationErrors = validateConnectionProfile(profile);
+
+      if (Object.values(validationErrors).some(Boolean)) {
+        throw new Error(Object.values(validationErrors).filter(Boolean).join(" "));
+      }
+
       mockState = {
         ...mockState,
         connections: upsertById(mockState.connections, profile),
       };
       recordActivity(t("mock.savedConnection", { name: profile.name }));
       return cloneState() as T;
+    }
+    case "test_connection_profile": {
+      const profile = args?.profile as ConnectionProfile;
+      const result = buildTestResult(profile);
+      recordActivity(t("mock.testedConnection", { name: result.normalizedProfile.name }));
+      return result as T;
     }
     case "delete_connection_profile": {
       const connectionId = args?.connectionId as string;
@@ -154,6 +208,59 @@ async function callOrMock<T>(command: string, args?: Record<string, unknown>): P
       };
       recordActivity(t("mock.deletedConnection", { name: connection?.name ?? connectionId }));
       return cloneState() as T;
+    }
+    case "import_connection_profiles_json": {
+      const content = String(args?.payload ?? args?.content ?? "");
+      const importedProfiles = sanitizeImportedProfiles(content);
+      let imported = 0;
+      let skipped = 0;
+      let duplicateCount = 0;
+
+      for (const profile of importedProfiles) {
+        const validationErrors = validateConnectionProfile(profile);
+        const duplicate = findConnectionDuplicate(mockState.connections, profile);
+
+        if (Object.values(validationErrors).some(Boolean)) {
+          skipped += 1;
+          continue;
+        }
+
+        if (duplicate) {
+          duplicateCount += 1;
+          skipped += 1;
+          continue;
+        }
+
+        imported += 1;
+        mockState = {
+          ...mockState,
+          connections: upsertById(mockState.connections, {
+            ...profile,
+            id: profile.id || createId("conn"),
+          }),
+        };
+      }
+
+      recordActivity(t("mock.importedConnections", { count: imported }));
+
+      const result: ConnectionImportResult = {
+        state: cloneState(),
+        imported,
+        skipped,
+        duplicateCount,
+        message: t("connections.importSuccess", { count: imported, skipped }),
+      };
+
+      return result as T;
+    }
+    case "export_connection_profiles_json": {
+      const result: ConnectionExportResult = {
+        content: JSON.stringify(mockState.connections, null, 2),
+        count: mockState.connections.length,
+        exportedAt: new Date().toISOString(),
+      };
+      recordActivity(t("mock.exportedConnections", { count: result.count }));
+      return result as T;
     }
     case "save_command_snippet": {
       const snippet = args?.snippet as CommandSnippet;
@@ -264,8 +371,17 @@ export const desktopClient = {
   saveConnectionProfile(profile: ConnectionProfile) {
     return callOrMock<BootstrapState>("save_connection_profile", { profile });
   },
+  testConnectionProfile(profile: ConnectionProfile) {
+    return callOrMock<ConnectionTestResult>("test_connection_profile", { profile });
+  },
   deleteConnectionProfile(connectionId: string) {
     return callOrMock<BootstrapState>("delete_connection_profile", { connectionId });
+  },
+  importConnectionProfilesFromJson(content: string) {
+    return callOrMock<ConnectionImportResult>("import_connection_profiles_json", { payload: content });
+  },
+  exportConnectionProfiles() {
+    return callOrMock<ConnectionExportResult>("export_connection_profiles_json");
   },
   saveCommandSnippet(snippet: CommandSnippet) {
     return callOrMock<BootstrapState>("save_command_snippet", { snippet });

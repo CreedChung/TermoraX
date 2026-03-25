@@ -226,6 +226,53 @@ textarea {
   gap: 12px;
 }
 
+.connection-panel-tools,
+.connection-search,
+.connection-panel-actions,
+.connection-group__header {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.connection-panel-tools,
+.connection-group__header {
+  justify-content: space-between;
+}
+
+.connection-panel-tools,
+.warning-banner,
+.info-banner,
+.danger-zone {
+  margin-bottom: 12px;
+}
+
+.warning-banner,
+.info-banner,
+.danger-zone {
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid var(--border);
+}
+
+.warning-banner {
+  background: rgba(242, 160, 92, 0.12);
+}
+
+.info-banner {
+  background: rgba(111, 207, 151, 0.1);
+}
+
+.danger-zone {
+  background: rgba(255, 141, 125, 0.1);
+}
+
+.field-error {
+  color: var(--danger);
+  font-size: 12px;
+}
+
 .connection-card,
 .snippet-card,
 .file-row,

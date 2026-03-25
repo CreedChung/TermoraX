@@ -17,6 +17,8 @@
 - Rust `commands` are a thin boundary layer. Non-trivial behavior belongs in `src-tauri/src/services`.
 - Domain models that cross the frontend/backend boundary must be explicitly defined and kept aligned in TypeScript and Rust.
 - New UI capabilities should prefer registration-style design over hardcoded menus or sidebars when practical.
+- Generated Rust code must include standard Rust documentation/comments on public items and non-obvious logic.
+- React/TypeScript frontend code should include necessary comments for non-obvious state flow, side effects, and UX logic, but avoid trivial comments.
 
 ## Implementation Priorities
 - First make the core workspace loop stable: connection profiles, session lifecycle, right-side panels, persisted settings.
@@ -33,3 +35,32 @@
 - New feature work should cover success flow and failure flow, not just happy-path rendering.
 - Avoid dumping new product logic back into `src/App.tsx` or `src-tauri/src/lib.rs`; keep those as entry shims.
 - If a feature is stubbed or simulated, label it clearly in UI copy and code comments where needed.
+- User-visible features should ship with necessary tests. For frontend, prefer component/state tests around the changed behavior. For Rust, prefer unit tests around service and validation logic.
+- When delegating work, choose the smallest capable sub-agent for bounded tasks and the stronger model for architecture-heavy or backend-heavy work. Current session should treat `gpt-5.4` as the default for complex Rust/backend tasks and use the available lightweight codex mini model for narrower frontend/component tasks when appropriate.
+
+## AI Agent Rules
+
+### Language
+- Code comments in both Rust and TypeScript should be written in English.
+- User-facing text (UI copy, logs intended for users) should default to Simplified Chinese.
+- Documentation inside this repository (e.g., README, AGENTS.md) should primarily use English, with optional Chinese explanations where helpful.
+
+### Task Delegation Strategy
+- Use `gpt-5.4` for:
+    - Architecture design
+    - Rust backend/services
+    - Cross-layer changes (frontend + backend)
+    - Complex state or concurrency logic
+
+- Use lightweight models (e.g., `gpt-5.4-mini` or Codex mini) for:
+    - React components
+    - UI styling and layout
+    - Small refactors
+    - Isolated TypeScript utilities
+
+- Prefer the smallest capable model that can complete the task correctly to reduce cost and latency.
+
+### Execution Guidelines
+- Break large tasks into smaller, well-defined subtasks before delegating.
+- Clearly define input/output expectations for sub-agents.
+- Avoid mixing multiple domains (e.g., SSH + UI + persistence) in a single task unless necessary.
