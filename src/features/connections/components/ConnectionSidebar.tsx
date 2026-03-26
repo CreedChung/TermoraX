@@ -1,4 +1,4 @@
-import { ChangeEvent, FormEvent, useMemo, useRef, useState } from "react";
+import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import type { ConnectionAuthType, ConnectionProfile } from "../../../entities/domain";
 import type { WorkspaceController } from "../../../app/useWorkspaceApp";
 import { Panel } from "../../../shared/components/Panel";
@@ -23,6 +23,22 @@ const emptyDraft = {
   privateKeyPassphrase: "",
 };
 
+function draftFromProfile(profile: ConnectionProfile) {
+  return {
+    name: profile.name,
+    host: profile.host,
+    port: String(profile.port),
+    username: profile.username,
+    group: profile.group,
+    authType: profile.authType,
+    note: profile.note,
+    tags: profile.tags.join(", "),
+    password: profile.password ?? "",
+    privateKeyPath: profile.privateKeyPath ?? "",
+    privateKeyPassphrase: profile.privateKeyPassphrase ?? "",
+  };
+}
+
 export function ConnectionSidebar({ controller }: ConnectionSidebarProps) {
   const { state, selectedConnection } = controller;
   const [draft, setDraft] = useState(emptyDraft);
@@ -44,6 +60,16 @@ export function ConnectionSidebar({ controller }: ConnectionSidebarProps) {
     pendingHostVerification && state.lastHostInspection?.connectionId === pendingHostVerification.connectionId
       ? state.lastHostInspection
       : null;
+
+  useEffect(() => {
+    if (!selectedConnection) {
+      return;
+    }
+
+    // The first bootstrap snapshot selects a connection automatically, so the editor
+    // needs to hydrate from that selection without waiting for a manual click.
+    setDraft(draftFromProfile(selectedConnection));
+  }, [selectedConnection?.id]);
 
   function buildDraftProfile(): Partial<ConnectionProfile> {
     return {
@@ -77,19 +103,7 @@ export function ConnectionSidebar({ controller }: ConnectionSidebarProps) {
     controller.selectConnection(profile.id);
     controller.clearConnectionFeedback();
     setConfirmDeleteId(null);
-    setDraft({
-      name: profile.name,
-      host: profile.host,
-      port: String(profile.port),
-      username: profile.username,
-      group: profile.group,
-      authType: profile.authType,
-      note: profile.note,
-      tags: profile.tags.join(", "),
-      password: profile.password ?? "",
-      privateKeyPath: profile.privateKeyPath ?? "",
-      privateKeyPassphrase: profile.privateKeyPassphrase ?? "",
-    });
+    setDraft(draftFromProfile(profile));
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
