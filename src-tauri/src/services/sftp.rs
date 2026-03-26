@@ -1,11 +1,11 @@
-use std::cmp::Ordering;
-use std::time::Duration;
+use std::{cmp::Ordering, fs, path::Path, time::Duration};
 
 use russh::client;
 use russh_sftp::{
     client::{SftpSession, error::Error as SftpError, fs::DirEntry},
     protocol::{FileAttributes, FileType, StatusCode},
 };
+use tokio::io::AsyncWriteExt;
 
 use crate::{
     error::{AppError, AppResult},
@@ -39,22 +39,8 @@ impl RusshSftpService {
         connection: &client::Handle<TermoraXClientHandler>,
         path: &str,
     ) -> AppResult<ListedRemoteDirectory> {
-        let timeout = Duration::from_secs(DEFAULT_SFTP_TIMEOUT_SECS);
         let requested_path = normalize_requested_path(path);
-
-        let channel = tokio::time::timeout(timeout, connection.channel_open_session())
-            .await
-            .map_err(|_| AppError::new("sftp_open_timeout", "SFTP 通道打开超时"))?
-            .map_err(|error| classify_ssh_channel_error("sftp_open_failed", "SFTP 通道打开失败", error))?;
-
-        channel
-            .request_subsystem(true, "sftp")
-            .await
-            .map_err(|error| classify_ssh_channel_error("sftp_subsystem_failed", "SFTP 子系统启动失败", error))?;
-
-        let sftp = SftpSession::new_opts(channel.into_stream(), Some(DEFAULT_SFTP_TIMEOUT_SECS))
-            .await
-            .map_err(|error| classify_sftp_error("sftp_init_failed", "SFTP 初始化失败", error))?;
+        let sftp = self.open_session(connection).await?;
 
         let canonical_path = sftp
             .canonicalize(requested_path.as_str())
@@ -74,6 +60,118 @@ impl RusshSftpService {
             canonical_path,
             entries,
         })
+    }
+
+    /// Uploads a local file to the provided remote path.
+    pub async fn upload_file(
+        &self,
+        connection: &client::Handle<TermoraXClientHandler>,
+        local_path: &Path,
+        remote_path: &str,
+    ) -> AppResult<u64> {
+        let bytes = fs::read(local_path)?;
+        let sftp = self.open_session(connection).await?;
+        let mut remote_file = sftp
+            .create(remote_path)
+            .await
+            .map_err(|error| classify_sftp_error("sftp_upload_failed", "上传远程文件失败", error))?;
+
+        remote_file
+            .write_all(&bytes)
+            .await
+            .map_err(|error| classify_sftp_error("sftp_upload_failed", "写入远程文件失败", error.into()))?;
+
+        Ok(bytes.len() as u64)
+    }
+
+    /// Downloads a remote file into the provided local path.
+    pub async fn download_file(
+        &self,
+        connection: &client::Handle<TermoraXClientHandler>,
+        remote_path: &str,
+        local_path: &Path,
+    ) -> AppResult<u64> {
+        let sftp = self.open_session(connection).await?;
+        let bytes = sftp
+            .read(remote_path)
+            .await
+            .map_err(|error| classify_sftp_error("sftp_download_failed", "下载远程文件失败", error))?;
+
+        if let Some(parent) = local_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(local_path, &bytes)?;
+
+        Ok(bytes.len() as u64)
+    }
+
+    /// Creates a remote directory at the provided path.
+    pub async fn create_directory(
+        &self,
+        connection: &client::Handle<TermoraXClientHandler>,
+        remote_path: &str,
+    ) -> AppResult<()> {
+        let sftp = self.open_session(connection).await?;
+        sftp.create_dir(remote_path)
+            .await
+            .map_err(|error| classify_sftp_error("sftp_create_dir_failed", "创建远程目录失败", error))
+    }
+
+    /// Deletes a remote file at the provided path.
+    pub async fn delete_file(
+        &self,
+        connection: &client::Handle<TermoraXClientHandler>,
+        remote_path: &str,
+    ) -> AppResult<()> {
+        let sftp = self.open_session(connection).await?;
+        sftp.remove_file(remote_path)
+            .await
+            .map_err(|error| classify_sftp_error("sftp_delete_file_failed", "删除远程文件失败", error))
+    }
+
+    /// Deletes an empty remote directory at the provided path.
+    pub async fn delete_directory(
+        &self,
+        connection: &client::Handle<TermoraXClientHandler>,
+        remote_path: &str,
+    ) -> AppResult<()> {
+        let sftp = self.open_session(connection).await?;
+        sftp.remove_dir(remote_path)
+            .await
+            .map_err(|error| classify_sftp_error("sftp_delete_dir_failed", "删除远程目录失败", error))
+    }
+
+    /// Renames a remote file-system entry.
+    pub async fn rename_path(
+        &self,
+        connection: &client::Handle<TermoraXClientHandler>,
+        old_path: &str,
+        new_path: &str,
+    ) -> AppResult<()> {
+        let sftp = self.open_session(connection).await?;
+        sftp.rename(old_path, new_path)
+            .await
+            .map_err(|error| classify_sftp_error("sftp_rename_failed", "重命名远程文件失败", error))
+    }
+
+    async fn open_session(
+        &self,
+        connection: &client::Handle<TermoraXClientHandler>,
+    ) -> AppResult<SftpSession> {
+        let timeout = Duration::from_secs(DEFAULT_SFTP_TIMEOUT_SECS);
+        let channel = tokio::time::timeout(timeout, connection.channel_open_session())
+            .await
+            .map_err(|_| AppError::new("sftp_open_timeout", "SFTP 通道打开超时"))?
+            .map_err(|error| classify_ssh_channel_error("sftp_open_failed", "SFTP 通道打开失败", error))?;
+
+        channel
+            .request_subsystem(true, "sftp")
+            .await
+            .map_err(|error| classify_ssh_channel_error("sftp_subsystem_failed", "SFTP 子系统启动失败", error))?;
+
+        SftpSession::new_opts(channel.into_stream(), Some(DEFAULT_SFTP_TIMEOUT_SECS))
+            .await
+            .map_err(|error| classify_sftp_error("sftp_init_failed", "SFTP 初始化失败", error))
     }
 }
 

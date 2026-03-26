@@ -9,6 +9,7 @@ import type {
   ConnectionTestResult,
   RemoteFileEntry,
   SessionEvent,
+  TransferTask,
 } from "../../entities/domain";
 import { defaultAppSettings, starterConnections, starterSnippets } from "../../features/settings/model/defaults";
 import {
@@ -42,6 +43,13 @@ const starterExtensions = [
     entrypoint: "features/snippets/components/SnippetPanel",
   },
   {
+    id: "builtin.sidebar.transfers",
+    title: "传输任务",
+    kind: "sidebarPanel" as const,
+    description: "上传下载任务状态面板。",
+    entrypoint: "features/transfers/components/TransferPanel",
+  },
+  {
     id: "builtin.protocol.ssh",
     title: "SSH 适配器",
     kind: "connectionProtocol" as const,
@@ -63,7 +71,10 @@ let mockState: BootstrapState = {
       timestamp: new Date().toISOString(),
     },
   ],
+  transfers: [],
 };
+
+const mockRemoteFileSystem: Record<string, RemoteFileEntry[]> = {};
 
 function isTauriRuntime() {
   return typeof window !== "undefined" && typeof window.__TAURI_INTERNALS__ !== "undefined";
@@ -98,6 +109,10 @@ function recordActivity(title: string) {
 }
 
 function mockRemoteEntriesForPath(path: string): RemoteFileEntry[] {
+  if (mockRemoteFileSystem[path]) {
+    return structuredClone(mockRemoteFileSystem[path]);
+  }
+
   const now = new Date().toISOString();
 
   if (path === "/") {
@@ -123,7 +138,7 @@ function mockRemoteEntriesForPath(path: string): RemoteFileEntry[] {
         size: 0,
         modifiedAt: now,
       },
-    ];
+    ] satisfies RemoteFileEntry[];
   }
 
   if (path === "/home") {
@@ -142,10 +157,10 @@ function mockRemoteEntriesForPath(path: string): RemoteFileEntry[] {
         size: 0,
         modifiedAt: now,
       },
-    ];
+    ] satisfies RemoteFileEntry[];
   }
 
-  return [
+  const entries: RemoteFileEntry[] = [
     {
       name: "deploy",
       path: `${path}/deploy`,
@@ -168,6 +183,8 @@ function mockRemoteEntriesForPath(path: string): RemoteFileEntry[] {
       modifiedAt: now,
     },
   ];
+  mockRemoteFileSystem[path] = entries;
+  return structuredClone(entries);
 }
 
 function parentRemotePath(path: string): string {
@@ -260,6 +277,103 @@ function sanitizeImportedProfiles(content: string) {
   return parsed
     .map((item) => normalizeConnectionInput(item as ConnectionProfile))
     .filter((item) => item.name || item.host || item.username);
+}
+
+function createTransferTask(
+  direction: "upload" | "download",
+  localPath: string,
+  remotePath: string,
+  bytesTotal: number,
+  bytesTransferred: number,
+): TransferTask {
+  const now = new Date().toISOString();
+
+  return {
+    id: createId("transfer"),
+    sessionId: mockState.sessions[0]?.id ?? "",
+    direction,
+    status: "succeeded",
+    localPath,
+    remotePath,
+    bytesTotal,
+    bytesTransferred,
+    startedAt: now,
+    finishedAt: now,
+    message: null,
+  };
+}
+
+function upsertMockRemoteFile(directory: string, nextEntry: RemoteFileEntry) {
+  const entries = mockRemoteEntriesForPath(directory).filter((entry) => entry.path !== nextEntry.path);
+  mockRemoteFileSystem[directory] = [nextEntry, ...entries];
+}
+
+function remotePathBaseName(path: string): string {
+  const parts = path.split("/").filter(Boolean);
+  return parts[parts.length - 1] ?? path;
+}
+
+function findMockRemoteEntry(path: string): RemoteFileEntry | null {
+  const directory = parentRemotePath(path);
+  return mockRemoteEntriesForPath(directory).find((entry) => entry.path === path) ?? null;
+}
+
+function removeMockRemoteEntry(path: string, isDirectory: boolean) {
+  const directory = parentRemotePath(path);
+  mockRemoteFileSystem[directory] = mockRemoteEntriesForPath(directory).filter((entry) => entry.path !== path);
+
+  if (!isDirectory) {
+    return;
+  }
+
+  for (const key of Object.keys(mockRemoteFileSystem)) {
+    if (key === path || key.startsWith(`${path}/`)) {
+      delete mockRemoteFileSystem[key];
+      continue;
+    }
+
+    mockRemoteFileSystem[key] = mockRemoteFileSystem[key].filter(
+      (entry) => entry.path !== path && !entry.path.startsWith(`${path}/`),
+    );
+  }
+}
+
+function renameMockRemoteEntry(path: string, targetPath: string, isDirectory: boolean) {
+  const existingEntry =
+    findMockRemoteEntry(path) ??
+    ({
+      name: remotePathBaseName(path),
+      path,
+      kind: isDirectory ? "directory" : "file",
+      size: 0,
+      modifiedAt: new Date().toISOString(),
+    } satisfies RemoteFileEntry);
+
+  removeMockRemoteEntry(path, isDirectory);
+
+  const now = new Date().toISOString();
+  upsertMockRemoteFile(parentRemotePath(targetPath), {
+    ...existingEntry,
+    name: remotePathBaseName(targetPath),
+    path: targetPath,
+    modifiedAt: now,
+  });
+
+  if (!isDirectory) {
+    return;
+  }
+
+  const nextFileSystem: Record<string, RemoteFileEntry[]> = {};
+  for (const [directory, entries] of Object.entries(mockRemoteFileSystem)) {
+    const nextDirectory =
+      directory === path ? targetPath : directory.startsWith(`${path}/`) ? directory.replace(path, targetPath) : directory;
+    nextFileSystem[nextDirectory] = entries.map((entry) => ({
+      ...entry,
+      path: entry.path === path ? targetPath : entry.path.startsWith(`${path}/`) ? entry.path.replace(path, targetPath) : entry.path,
+    }));
+  }
+
+  Object.assign(mockRemoteFileSystem, nextFileSystem);
 }
 
 async function callOrMock<T>(command: string, args?: Record<string, unknown>): Promise<T> {
@@ -518,6 +632,72 @@ async function callOrMock<T>(command: string, args?: Record<string, unknown>): P
       const nextPath = parentRemotePath(session?.currentPath ?? "/");
       return callOrMock<T>("navigate_remote_directory", { sessionId, path: nextPath });
     }
+    case "upload_file_to_remote": {
+      const localPath = String(args?.localPath ?? "");
+      const remotePath = String(args?.remotePath ?? "");
+      const directory = parentRemotePath(remotePath);
+      const parts = remotePath.split("/").filter(Boolean);
+      const filename = parts[parts.length - 1] ?? remotePath;
+      const now = new Date().toISOString();
+      upsertMockRemoteFile(directory, {
+        name: filename,
+        path: remotePath,
+        kind: "file",
+        size: 2048,
+        modifiedAt: now,
+      });
+      mockState = {
+        ...mockState,
+        transfers: [
+          createTransferTask("upload", localPath, remotePath, 2048, 2048),
+          ...mockState.transfers,
+        ].slice(0, 50),
+      };
+      recordActivity(`已上传文件到 ${remotePath}`);
+      return cloneState() as T;
+    }
+    case "download_file_from_remote": {
+      const remotePath = String(args?.remotePath ?? "");
+      const localPath = String(args?.localPath ?? "");
+      mockState = {
+        ...mockState,
+        transfers: [
+          createTransferTask("download", localPath, remotePath, 2048, 2048),
+          ...mockState.transfers,
+        ].slice(0, 50),
+      };
+      recordActivity(`已下载文件到 ${localPath}`);
+      return cloneState() as T;
+    }
+    case "create_remote_directory": {
+      const path = String(args?.path ?? "");
+      const now = new Date().toISOString();
+      upsertMockRemoteFile(parentRemotePath(path), {
+        name: remotePathBaseName(path),
+        path,
+        kind: "directory",
+        size: 0,
+        modifiedAt: now,
+      });
+      mockRemoteFileSystem[path] = mockRemoteFileSystem[path] ?? [];
+      recordActivity(`已创建远程目录 ${path}`);
+      return cloneState() as T;
+    }
+    case "rename_remote_entry": {
+      const path = String(args?.path ?? "");
+      const targetPath = String(args?.targetPath ?? "");
+      const entry = findMockRemoteEntry(path);
+      renameMockRemoteEntry(path, targetPath, entry?.kind === "directory");
+      recordActivity(`已重命名远程路径 ${path} -> ${targetPath}`);
+      return cloneState() as T;
+    }
+    case "delete_remote_entry": {
+      const path = String(args?.path ?? "");
+      const isDirectory = Boolean(args?.isDirectory);
+      removeMockRemoteEntry(path, isDirectory);
+      recordActivity(`已删除远程路径 ${path}`);
+      return cloneState() as T;
+    }
     default:
       throw new Error(`Unsupported mock command: ${command}`);
   }
@@ -586,6 +766,21 @@ export const desktopClient = {
   },
   navigateRemoteToParent(sessionId: string) {
     return callOrMock<BootstrapState>("navigate_remote_to_parent", { sessionId });
+  },
+  uploadFileToRemote(sessionId: string, localPath: string, remotePath: string) {
+    return callOrMock<BootstrapState>("upload_file_to_remote", { sessionId, localPath, remotePath });
+  },
+  downloadFileFromRemote(sessionId: string, remotePath: string, localPath: string) {
+    return callOrMock<BootstrapState>("download_file_from_remote", { sessionId, remotePath, localPath });
+  },
+  createRemoteDirectory(sessionId: string, path: string) {
+    return callOrMock<BootstrapState>("create_remote_directory", { sessionId, path });
+  },
+  renameRemoteEntry(sessionId: string, path: string, targetPath: string) {
+    return callOrMock<BootstrapState>("rename_remote_entry", { sessionId, path, targetPath });
+  },
+  deleteRemoteEntry(sessionId: string, path: string, isDirectory: boolean) {
+    return callOrMock<BootstrapState>("delete_remote_entry", { sessionId, path, isDirectory });
   },
   subscribeSessionEvents(listener: (event: SessionEvent) => void) {
     if (!isTauriRuntime()) {

@@ -10,6 +10,11 @@ interface FilePanelProps {
   loading?: boolean;
   onOpenDirectory?: (path: string) => void;
   onGoParent?: () => void;
+  onUpload?: () => void;
+  onCreateDirectory?: () => void;
+  onDownload?: (path: string) => void;
+  onRename?: (entry: RemoteFileEntry) => void;
+  onDelete?: (entry: RemoteFileEntry) => void;
 }
 
 function formatFileSize(value: number): string {
@@ -30,13 +35,19 @@ function formatFileSize(value: number): string {
   return `${size.toFixed(1)} ${units[unitIndex]}`;
 }
 
-export function FilePanel({
-  entries,
-  currentPath,
-  loading = false,
-  onOpenDirectory,
-  onGoParent,
-}: FilePanelProps) {
+export function FilePanel(props: FilePanelProps) {
+  const {
+    entries,
+    currentPath,
+    loading = false,
+    onOpenDirectory,
+    onGoParent,
+    onUpload,
+    onCreateDirectory,
+    onDownload,
+    onRename,
+    onDelete,
+  } = props;
   const statusMessage = useMemo(() => (loading ? t("files.loading") : t("files.empty")), [loading]);
   const pathLabel = t("files.currentPathLabel");
   const pathDisplay = currentPath ?? t("files.noSession");
@@ -55,6 +66,28 @@ export function FilePanel({
         </p>
         <p className="file-panel__meta-count">{summaryLabel}</p>
         <div className="file-panel__meta-actions">
+          {onCreateDirectory ? (
+            <button
+              type="button"
+              className="ghost-button file-panel__action-button"
+              onClick={onCreateDirectory}
+              disabled={loading}
+              aria-disabled={loading}
+            >
+              {t("files.newFolder")}
+            </button>
+          ) : null}
+          {onUpload ? (
+            <button
+              type="button"
+              className="ghost-button file-panel__action-button"
+              onClick={onUpload}
+              disabled={loading}
+              aria-disabled={loading}
+            >
+              {t("files.upload")}
+            </button>
+          ) : null}
           <button
             type="button"
             className="file-panel__parent-button"
@@ -114,6 +147,41 @@ export function FilePanel({
                     {entry.kind === "file" ? formatFileSize(entry.size) : t("files.folderSizeUnknown")}
                   </span>
                   <span>{formatTimestamp(entry.modifiedAt)}</span>
+                  <div className="file-row__actions">
+                    {entry.kind === "file" && onDownload ? (
+                      <button
+                        type="button"
+                        className="ghost-button file-row__download"
+                        onClick={() => onDownload(entry.path)}
+                        disabled={loading}
+                        aria-disabled={loading}
+                      >
+                        {t("files.download")}
+                      </button>
+                    ) : null}
+                    {onRename ? (
+                      <button
+                        type="button"
+                        className="ghost-button file-row__download"
+                        onClick={() => onRename(entry)}
+                        disabled={loading}
+                        aria-disabled={loading}
+                      >
+                        {t("files.rename")}
+                      </button>
+                    ) : null}
+                    {onDelete ? (
+                      <button
+                        type="button"
+                        className="ghost-button file-row__download"
+                        onClick={() => onDelete(entry)}
+                        disabled={loading}
+                        aria-disabled={loading}
+                      >
+                        {t("files.delete")}
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
               </article>
             );

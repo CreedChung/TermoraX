@@ -76,4 +76,35 @@ describe("FilePanel", () => {
     await user.click(screen.getByRole("button", { name: /deploy/ }));
     expect(openDirectory).toHaveBeenCalledWith("/home/demo/deploy");
   });
+
+  it("shows file operation buttons when callbacks exist", async () => {
+    const user = userEvent.setup();
+    const createDirectory = vi.fn();
+    const upload = vi.fn();
+    const download = vi.fn();
+    const rename = vi.fn();
+    const remove = vi.fn();
+    render(
+      <FilePanel
+        entries={[sampleDir, sampleFile]}
+        currentPath="/home/demo"
+        onCreateDirectory={createDirectory}
+        onUpload={upload}
+        onDownload={download}
+        onRename={rename}
+        onDelete={remove}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "新建目录" }));
+    expect(createDirectory).toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "上传" }));
+    expect(upload).toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "下载" }));
+    expect(download).toHaveBeenCalledWith("/home/demo/README.md");
+    await user.click(screen.getAllByRole("button", { name: "重命名" })[0]);
+    expect(rename).toHaveBeenCalledWith(sampleDir);
+    await user.click(screen.getAllByRole("button", { name: "删除" })[1]);
+    expect(remove).toHaveBeenCalledWith(sampleFile);
+  });
 });

@@ -216,6 +216,71 @@ textarea {
   padding: 16px 20px 20px;
 }
 
+.transfer-panel {
+  border-radius: 24px;
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.transfer-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.transfer-row {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 12px 16px;
+  background: var(--surface-alt);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.transfer-row__summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 14px;
+}
+
+.transfer-row__meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.transfer-progress {
+  flex: 1;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.transfer-progress__fill {
+  height: 100%;
+  background: linear-gradient(90deg, #f2a05c, #f1df6c);
+}
+
+.transfer-row__time {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.transfer-row__cancel {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+.transfer-panel__state {
+  display: grid;
+  place-items: center;
+  min-height: 120px;
+}
+
 .connection-list,
 .file-list,
 .activity-list,
@@ -288,6 +353,16 @@ textarea {
   display: flex;
   justify-content: flex-end;
   width: 100%;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.file-panel__action-button {
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  padding: 6px 14px;
+  background: transparent;
+  color: var(--text);
 }
 
 .file-panel__parent-button {
@@ -313,6 +388,26 @@ textarea {
 
 .file-row__info-button:disabled,
 .file-row__info-button[aria-disabled="true"] {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.file-row__download {
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  padding: 4px 12px;
+  font-size: 12px;
+  background: transparent;
+}
+
+.file-row__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.file-row__download:disabled,
+.file-row__download[aria-disabled="true"] {
   opacity: 0.6;
   cursor: not-allowed;
 }

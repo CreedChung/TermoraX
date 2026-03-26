@@ -5,7 +5,7 @@ export type ExtensionKind =
   | "terminalAction"
   | "commandPaletteItem"
   | "connectionProtocol";
-export type RightPanelId = "files" | "snippets" | "activity";
+export type RightPanelId = "files" | "snippets" | "activity" | "transfers";
 
 export interface ConnectionProfile {
   id: string;
@@ -95,6 +95,23 @@ export interface RemoteFileEntry {
   modifiedAt: string;
 }
 
+export type TransferDirection = "upload" | "download";
+export type TransferStatus = "running" | "succeeded" | "failed";
+
+export interface TransferTask {
+  id: string;
+  sessionId: string;
+  direction: TransferDirection;
+  status: TransferStatus;
+  localPath: string;
+  remotePath: string;
+  bytesTotal: number;
+  bytesTransferred: number;
+  startedAt: string;
+  finishedAt: string | null;
+  message: string | null;
+}
+
 export interface CommandSnippet {
   id: string;
   name: string;
@@ -146,6 +163,7 @@ export interface BootstrapState {
   settings: AppSettings;
   extensions: ExtensionContribution[];
   activity: ActivityEntry[];
+  transfers: TransferTask[];
 }
 
 export interface ConnectionImportResult {

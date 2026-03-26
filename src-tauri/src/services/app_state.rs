@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     fs,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -16,7 +16,7 @@ use crate::{
     models::{
         ActivityEntry, BootstrapState, CommandSnippet, ConnectionExportResult, ConnectionImportResult,
         ConnectionProfile, ConnectionTestResult, ConnectionValidationResult, PersistedState, RemoteFileEntry,
-        SessionTab,
+        SessionTab, TransferTask,
     },
     services::{connections, sessions, sftp, ssh},
 };
@@ -260,6 +260,61 @@ impl AppState {
         Ok(store.snapshot())
     }
 
+    /// Uploads a local file into the current remote workspace.
+    pub fn upload_file_to_remote(
+        &self,
+        session_id: &str,
+        local_path: &str,
+        remote_path: &str,
+    ) -> AppResult<BootstrapState> {
+        let mut store = self.store.lock()?;
+        store.upload_file_to_remote(session_id, local_path, remote_path)?;
+        Ok(store.snapshot())
+    }
+
+    /// Downloads a remote file into a local target path.
+    pub fn download_file_from_remote(
+        &self,
+        session_id: &str,
+        remote_path: &str,
+        local_path: &str,
+    ) -> AppResult<BootstrapState> {
+        let mut store = self.store.lock()?;
+        store.download_file_from_remote(session_id, remote_path, local_path)?;
+        Ok(store.snapshot())
+    }
+
+    /// Creates a remote directory for the active SFTP session.
+    pub fn create_remote_directory(&self, session_id: &str, path: &str) -> AppResult<BootstrapState> {
+        let mut store = self.store.lock()?;
+        store.create_remote_directory(session_id, path)?;
+        Ok(store.snapshot())
+    }
+
+    /// Renames a remote file-system entry for the active SFTP session.
+    pub fn rename_remote_entry(
+        &self,
+        session_id: &str,
+        path: &str,
+        target_path: &str,
+    ) -> AppResult<BootstrapState> {
+        let mut store = self.store.lock()?;
+        store.rename_remote_entry(session_id, path, target_path)?;
+        Ok(store.snapshot())
+    }
+
+    /// Deletes a remote file-system entry for the active SFTP session.
+    pub fn delete_remote_entry(
+        &self,
+        session_id: &str,
+        path: &str,
+        is_directory: bool,
+    ) -> AppResult<BootstrapState> {
+        let mut store = self.store.lock()?;
+        store.delete_remote_entry(session_id, path, is_directory)?;
+        Ok(store.snapshot())
+    }
+
     fn spawn_session_reader(&self, app_handle: AppHandle, session_id: String, mut reader: ChannelReadHalf) {
         let store = Arc::clone(&self.store);
 
@@ -290,6 +345,7 @@ struct AppStore {
     persisted: PersistedState,
     sessions: Vec<SessionTab>,
     activity: Vec<ActivityEntry>,
+    transfers: Vec<TransferTask>,
     runtimes: HashMap<String, LiveSessionRuntime>,
 }
 
@@ -315,6 +371,7 @@ impl AppStore {
                 title: "工作台状态已初始化。".into(),
                 timestamp: now_iso(),
             }],
+            transfers: Vec::new(),
             runtimes: HashMap::new(),
         })
     }
@@ -327,6 +384,7 @@ impl AppStore {
             settings: self.persisted.settings.clone(),
             extensions: builtin_extensions(),
             activity: self.activity.clone(),
+            transfers: self.transfers.clone(),
         }
     }
 
@@ -629,6 +687,104 @@ impl AppStore {
         self.navigate_remote_directory(session_id, &parent_path)
     }
 
+    fn upload_file_to_remote(&mut self, session_id: &str, local_path: &str, remote_path: &str) -> AppResult<()> {
+        let local_path_ref = Path::new(local_path);
+        let file_size = fs::metadata(local_path_ref)?.len();
+        let task_id = self.start_transfer_task(session_id, "upload", local_path, remote_path, file_size);
+        let runtime = self
+            .runtimes
+            .get(session_id)
+            .ok_or_else(|| AppError::new("session_not_connected", "当前会话尚未建立实时 SSH 连接"))?;
+
+        match tauri::async_runtime::block_on(
+            sftp::default_sftp_service().upload_file(&runtime.connection, local_path_ref, remote_path),
+        ) {
+            Ok(bytes_transferred) => {
+                self.finish_transfer_task_success(&task_id, bytes_transferred);
+                self.record_activity(format!(
+                    "已上传文件 {} -> {}。",
+                    local_path_ref.display(),
+                    remote_path
+                ));
+                Ok(())
+            }
+            Err(error) => {
+                self.finish_transfer_task_failure(&task_id, error.message.clone());
+                Err(error)
+            }
+        }
+    }
+
+    fn download_file_from_remote(&mut self, session_id: &str, remote_path: &str, local_path: &str) -> AppResult<()> {
+        let local_path_ref = Path::new(local_path);
+        let task_id = self.start_transfer_task(session_id, "download", local_path, remote_path, 0);
+        let runtime = self
+            .runtimes
+            .get(session_id)
+            .ok_or_else(|| AppError::new("session_not_connected", "当前会话尚未建立实时 SSH 连接"))?;
+
+        match tauri::async_runtime::block_on(
+            sftp::default_sftp_service().download_file(&runtime.connection, remote_path, local_path_ref),
+        ) {
+            Ok(bytes_transferred) => {
+                self.finish_transfer_task_success(&task_id, bytes_transferred);
+                self.record_activity(format!(
+                    "已下载文件 {} -> {}。",
+                    remote_path,
+                    local_path_ref.display()
+                ));
+                Ok(())
+            }
+            Err(error) => {
+                self.finish_transfer_task_failure(&task_id, error.message.clone());
+                Err(error)
+            }
+        }
+    }
+
+    fn create_remote_directory(&mut self, session_id: &str, path: &str) -> AppResult<()> {
+        let runtime = self
+            .runtimes
+            .get(session_id)
+            .ok_or_else(|| AppError::new("session_not_connected", "当前会话尚未建立实时 SSH 连接"))?;
+
+        tauri::async_runtime::block_on(sftp::default_sftp_service().create_directory(&runtime.connection, path))?;
+        self.record_activity(format!("已创建远程目录 {}。", path));
+        Ok(())
+    }
+
+    fn rename_remote_entry(&mut self, session_id: &str, path: &str, target_path: &str) -> AppResult<()> {
+        let runtime = self
+            .runtimes
+            .get(session_id)
+            .ok_or_else(|| AppError::new("session_not_connected", "当前会话尚未建立实时 SSH 连接"))?;
+
+        tauri::async_runtime::block_on(
+            sftp::default_sftp_service().rename_path(&runtime.connection, path, target_path),
+        )?;
+        self.record_activity(format!("已重命名远程路径 {} -> {}。", path, target_path));
+        Ok(())
+    }
+
+    fn delete_remote_entry(&mut self, session_id: &str, path: &str, is_directory: bool) -> AppResult<()> {
+        let runtime = self
+            .runtimes
+            .get(session_id)
+            .ok_or_else(|| AppError::new("session_not_connected", "当前会话尚未建立实时 SSH 连接"))?;
+
+        if is_directory {
+            tauri::async_runtime::block_on(
+                sftp::default_sftp_service().delete_directory(&runtime.connection, path),
+            )?;
+            self.record_activity(format!("已删除远程目录 {}。", path));
+        } else {
+            tauri::async_runtime::block_on(sftp::default_sftp_service().delete_file(&runtime.connection, path))?;
+            self.record_activity(format!("已删除远程文件 {}。", path));
+        }
+
+        Ok(())
+    }
+
     fn find_connection(&self, connection_id: &str) -> AppResult<&ConnectionProfile> {
         self.persisted
             .connections
@@ -742,6 +898,55 @@ impl AppStore {
         );
         self.activity.truncate(20);
     }
+
+    fn start_transfer_task(
+        &mut self,
+        session_id: &str,
+        direction: &str,
+        local_path: &str,
+        remote_path: &str,
+        bytes_total: u64,
+    ) -> String {
+        let task_id = next_id("transfer");
+        self.transfers.insert(
+            0,
+            TransferTask {
+                id: task_id.clone(),
+                session_id: session_id.to_string(),
+                direction: direction.to_string(),
+                status: "running".into(),
+                local_path: local_path.to_string(),
+                remote_path: remote_path.to_string(),
+                bytes_total,
+                bytes_transferred: 0,
+                started_at: now_iso(),
+                finished_at: None,
+                message: None,
+            },
+        );
+        self.transfers.truncate(50);
+        task_id
+    }
+
+    fn finish_transfer_task_success(&mut self, task_id: &str, bytes_transferred: u64) {
+        if let Some(task) = self.transfers.iter_mut().find(|item| item.id == task_id) {
+            task.status = "succeeded".into();
+            task.bytes_transferred = bytes_transferred;
+            if task.bytes_total == 0 {
+                task.bytes_total = bytes_transferred;
+            }
+            task.finished_at = Some(now_iso());
+            task.message = None;
+        }
+    }
+
+    fn finish_transfer_task_failure(&mut self, task_id: &str, message: String) {
+        if let Some(task) = self.transfers.iter_mut().find(|item| item.id == task_id) {
+            task.status = "failed".into();
+            task.finished_at = Some(now_iso());
+            task.message = Some(message);
+        }
+    }
 }
 
 fn upsert_by_id<T>(items: &mut Vec<T>, next: T)
@@ -814,7 +1019,7 @@ fn emit_session_event(app_handle: &AppHandle, event: SessionUiEvent) {
 mod tests {
     use std::{env, fs, path::PathBuf};
 
-    use super::{AppState, parent_remote_path};
+    use super::{AppState, AppStore, parent_remote_path};
     use crate::models::ConnectionProfile;
 
     fn temp_config_dir(name: &str) -> PathBuf {
@@ -869,6 +1074,58 @@ mod tests {
             .expect("validation should succeed");
 
         assert_eq!(result.normalized_profile.name, "测试主机");
+    }
+
+    #[test]
+    fn transfer_tasks_track_success_and_failure_states() {
+        let dir = temp_config_dir("transfer-lifecycle");
+        let mut store = AppStore::load(dir).expect("store should initialize");
+
+        let upload_task_id =
+            store.start_transfer_task("session-1", "upload", "C:/tmp/demo.log", "/home/demo/demo.log", 128);
+        let download_task_id =
+            store.start_transfer_task("session-1", "download", "D:/backup/demo.log", "/srv/demo.log", 0);
+
+        store.finish_transfer_task_success(&upload_task_id, 128);
+        store.finish_transfer_task_failure(&download_task_id, "download failed".into());
+
+        let upload_task = store
+            .transfers
+            .iter()
+            .find(|task| task.id == upload_task_id)
+            .expect("upload task should exist");
+        assert_eq!(upload_task.status, "succeeded");
+        assert_eq!(upload_task.bytes_total, 128);
+        assert_eq!(upload_task.bytes_transferred, 128);
+        assert!(upload_task.finished_at.is_some());
+        assert_eq!(upload_task.message, None);
+
+        let download_task = store
+            .transfers
+            .iter()
+            .find(|task| task.id == download_task_id)
+            .expect("download task should exist");
+        assert_eq!(download_task.status, "failed");
+        assert_eq!(download_task.bytes_total, 0);
+        assert_eq!(download_task.bytes_transferred, 0);
+        assert!(download_task.finished_at.is_some());
+        assert_eq!(download_task.message.as_deref(), Some("download failed"));
+    }
+
+    #[test]
+    fn transfer_tasks_keep_recent_history_window() {
+        let dir = temp_config_dir("transfer-history");
+        let mut store = AppStore::load(dir).expect("store should initialize");
+
+        for index in 0..55 {
+            let local_path = format!("C:/tmp/file-{}.txt", index);
+            let remote_path = format!("/srv/file-{}.txt", index);
+            let _ = store.start_transfer_task("session-1", "upload", &local_path, &remote_path, 32);
+        }
+
+        assert_eq!(store.transfers.len(), 50);
+        assert_eq!(store.transfers[0].local_path, "C:/tmp/file-54.txt");
+        assert_eq!(store.transfers[49].local_path, "C:/tmp/file-5.txt");
     }
 
     #[test]

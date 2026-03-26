@@ -2,6 +2,7 @@ import type { WorkspaceController } from "../../../app/useWorkspaceApp";
 import { ConnectionSidebar } from "../../connections/components/ConnectionSidebar";
 import { SnippetPanel } from "../../snippets/components/SnippetPanel";
 import { FilePanel } from "../../sftp/components/FilePanel";
+import { TransferPanel } from "../../transfers/components/TransferPanel";
 import { TerminalWorkspace } from "../../terminal/components/TerminalWorkspace";
 import { formatTimestamp } from "../../../shared/lib/time";
 import { getLocaleState, t } from "../../../shared/i18n";
@@ -62,7 +63,15 @@ export function WorkspaceShell({ controller }: WorkspaceShellProps) {
                 loading={state.remoteEntriesLoading}
                 onOpenDirectory={controller.openRemoteDirectory}
                 onGoParent={controller.goRemoteParent}
+                onUpload={controller.uploadFileToCurrentDirectory}
+                onCreateDirectory={controller.createRemoteDirectory}
+                onDownload={controller.downloadRemoteFile}
+                onRename={controller.renameRemoteEntry}
+                onDelete={controller.deleteRemoteEntry}
               />
+            ) : null}
+            {state.settings.workspace.rightPanel === "transfers" ? (
+              <TransferPanel tasks={state.transfers} />
             ) : null}
             {state.settings.workspace.rightPanel === "snippets" ? <SnippetPanel controller={controller} /> : null}
             {state.settings.workspace.rightPanel === "activity" ? (
@@ -118,6 +127,9 @@ export function WorkspaceShell({ controller }: WorkspaceShellProps) {
           </button>
           <button className="ghost-button" onClick={() => void controller.updateRightPanel("activity")} type="button">
             {t("workspace.action.activity")}
+          </button>
+          <button className="ghost-button" onClick={() => void controller.updateRightPanel("transfers")} type="button">
+            {t("workspace.action.transfers")}
           </button>
         </div>
         <div className="button-row">

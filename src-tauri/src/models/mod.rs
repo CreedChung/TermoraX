@@ -97,6 +97,23 @@ pub struct RemoteFileEntry {
     pub modified_at: String,
 }
 
+/// A tracked upload or download task shown in the transfer center.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransferTask {
+    pub id: String,
+    pub session_id: String,
+    pub direction: String,
+    pub status: String,
+    pub local_path: String,
+    pub remote_path: String,
+    pub bytes_total: u64,
+    pub bytes_transferred: u64,
+    pub started_at: String,
+    pub finished_at: Option<String>,
+    pub message: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommandSnippet {
@@ -182,6 +199,7 @@ pub struct BootstrapState {
     pub settings: AppSettings,
     pub extensions: Vec<ExtensionContribution>,
     pub activity: Vec<ActivityEntry>,
+    pub transfers: Vec<TransferTask>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

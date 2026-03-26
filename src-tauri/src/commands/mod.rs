@@ -184,3 +184,57 @@ pub fn navigate_remote_to_parent(
 ) -> AppResult<BootstrapState> {
     state.navigate_remote_to_parent(&session_id)
 }
+
+/// Uploads a local file into a remote target path.
+#[tauri::command]
+pub fn upload_file_to_remote(
+    state: State<'_, AppState>,
+    session_id: String,
+    local_path: String,
+    remote_path: String,
+) -> AppResult<BootstrapState> {
+    state.upload_file_to_remote(&session_id, &local_path, &remote_path)
+}
+
+/// Downloads a remote file into a local target path.
+#[tauri::command]
+pub fn download_file_from_remote(
+    state: State<'_, AppState>,
+    session_id: String,
+    remote_path: String,
+    local_path: String,
+) -> AppResult<BootstrapState> {
+    state.download_file_from_remote(&session_id, &remote_path, &local_path)
+}
+
+/// Creates a remote directory inside the current SFTP workspace.
+#[tauri::command]
+pub fn create_remote_directory(
+    state: State<'_, AppState>,
+    session_id: String,
+    path: String,
+) -> AppResult<BootstrapState> {
+    state.create_remote_directory(&session_id, &path)
+}
+
+/// Renames a remote file-system entry.
+#[tauri::command]
+pub fn rename_remote_entry(
+    state: State<'_, AppState>,
+    session_id: String,
+    path: String,
+    target_path: String,
+) -> AppResult<BootstrapState> {
+    state.rename_remote_entry(&session_id, &path, &target_path)
+}
+
+/// Deletes a remote file or directory.
+#[tauri::command]
+pub fn delete_remote_entry(
+    state: State<'_, AppState>,
+    session_id: String,
+    path: String,
+    is_directory: bool,
+) -> AppResult<BootstrapState> {
+    state.delete_remote_entry(&session_id, &path, is_directory)
+}

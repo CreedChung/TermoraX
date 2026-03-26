@@ -95,6 +95,7 @@ function buildState(session: SessionTab | null): WorkspaceViewState {
     settings: defaultAppSettings,
     extensions: [],
     activity: [],
+    transfers: [],
     isLoading: false,
     error: null,
     selectedConnectionId: null,
@@ -112,6 +113,7 @@ function createController(session: SessionTab | null = sampleSession, overrides?
   const state = buildState(session);
   const controller: WorkspaceController = {
     state,
+    selectedConnection: null,
     activeSession: session,
     clearConnectionFeedback: vi.fn(),
     selectConnection: vi.fn(),
@@ -130,6 +132,11 @@ function createController(session: SessionTab | null = sampleSession, overrides?
     sendSessionInput: vi.fn(),
     openRemoteDirectory: vi.fn(),
     goRemoteParent: vi.fn(),
+    uploadFileToCurrentDirectory: vi.fn(),
+    downloadRemoteFile: vi.fn(),
+    createRemoteDirectory: vi.fn(),
+    renameRemoteEntry: vi.fn(),
+    deleteRemoteEntry: vi.fn(),
     saveSnippet: vi.fn(),
     deleteSnippet: vi.fn(),
     runSnippetOnActiveSession: vi.fn(),

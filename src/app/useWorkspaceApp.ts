@@ -46,6 +46,7 @@ const initialState: WorkspaceState = {
   settings: defaultAppSettings,
   extensions: [],
   activity: [],
+  transfers: [],
   isLoading: true,
   error: null,
   selectedConnectionId: null,
@@ -71,10 +72,59 @@ function deriveNextSelection(snapshot: BootstrapState, currentConnectionId: stri
   return { selectedConnectionId, activeSessionId };
 }
 
+function parseSessionTimestamp(value: string): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+/**
+ * Preserves newer real-time terminal output when a mutation snapshot arrives behind session events.
+ */
+export function mergeSnapshotSessions(currentSessions: SessionTab[], snapshotSessions: SessionTab[]): SessionTab[] {
+  const currentById = new Map(currentSessions.map((session) => [session.id, session]));
+
+  return snapshotSessions.map((snapshotSession) => {
+    const currentSession = currentById.get(snapshotSession.id);
+    if (!currentSession || currentSession.lastOutput === snapshotSession.lastOutput) {
+      return snapshotSession;
+    }
+
+    const currentExtendsSnapshot =
+      currentSession.lastOutput.length > snapshotSession.lastOutput.length &&
+      currentSession.lastOutput.startsWith(snapshotSession.lastOutput);
+    const currentIsNewer =
+      parseSessionTimestamp(currentSession.updatedAt) > parseSessionTimestamp(snapshotSession.updatedAt);
+
+    if (!currentExtendsSnapshot && !currentIsNewer) {
+      return snapshotSession;
+    }
+
+    return {
+      ...snapshotSession,
+      lastOutput: currentSession.lastOutput,
+      updatedAt: currentIsNewer ? currentSession.updatedAt : snapshotSession.updatedAt,
+    };
+  });
+}
+
 export function useWorkspaceApp() {
   const [state, setState] = useState<WorkspaceState>(initialState);
   const activeSessionCurrentPath =
     state.sessions.find((item) => item.id === state.activeSessionId)?.currentPath ?? null;
+
+  async function refreshRemoteEntries(sessionId: string) {
+    setState((current) => ({ ...current, remoteEntriesLoading: true }));
+    try {
+      const remoteEntries = await desktopClient.listRemoteEntries(sessionId);
+      setState((current) => ({ ...current, remoteEntries, remoteEntriesLoading: false }));
+    } catch (error) {
+      setState((current) => ({
+        ...current,
+        error: error instanceof Error ? error.message : t("errors.remoteEntries"),
+        remoteEntriesLoading: false,
+      }));
+    }
+  }
 
   function setConnectionFeedback(input: {
     errors?: ConnectionValidationErrors;
@@ -122,13 +172,20 @@ export function useWorkspaceApp() {
 
   function applySnapshot(snapshot: BootstrapState) {
     startTransition(() => {
-      setState((current) => ({
-        ...current,
-        ...snapshot,
-        ...deriveNextSelection(snapshot, current.selectedConnectionId, current.activeSessionId),
-        isLoading: false,
-        error: null,
-      }));
+      setState((current) => {
+        const mergedSnapshot = {
+          ...snapshot,
+          sessions: mergeSnapshotSessions(current.sessions, snapshot.sessions),
+        };
+
+        return {
+          ...current,
+          ...mergedSnapshot,
+          ...deriveNextSelection(mergedSnapshot, current.selectedConnectionId, current.activeSessionId),
+          isLoading: false,
+          error: null,
+        };
+      });
     });
   }
 
@@ -156,23 +213,11 @@ export function useWorkspaceApp() {
     }
 
     let cancelled = false;
-    setState((current) => ({ ...current, remoteEntriesLoading: true }));
-    void desktopClient
-      .listRemoteEntries(state.activeSessionId)
-      .then((remoteEntries) => {
-        if (!cancelled) {
-          setState((current) => ({ ...current, remoteEntries, remoteEntriesLoading: false }));
-        }
-      })
-      .catch((error) => {
-        if (!cancelled) {
-          setState((current) => ({
-            ...current,
-            error: error instanceof Error ? error.message : t("errors.remoteEntries"),
-            remoteEntriesLoading: false,
-          }));
-        }
-      });
+    void refreshRemoteEntries(state.activeSessionId).then(() => {
+      if (cancelled) {
+        setState((current) => ({ ...current, remoteEntriesLoading: false }));
+      }
+    });
 
     return () => {
       cancelled = true;
@@ -372,6 +417,89 @@ export function useWorkspaceApp() {
       }
       await runMutation(() => desktopClient.navigateRemoteToParent(state.activeSessionId as string));
     },
+    async uploadFileToCurrentDirectory() {
+      const sessionId = state.activeSessionId;
+      const currentPath = activeSessionCurrentPath;
+      if (!sessionId || !currentPath) {
+        return;
+      }
+      const localPath = requestPathInput(t("files.uploadPrompt"));
+      if (!localPath) {
+        return;
+      }
+
+      const remotePath = joinRemotePath(currentPath, localPathBaseName(localPath));
+      await runMutation(() => desktopClient.uploadFileToRemote(sessionId, localPath, remotePath));
+      await refreshRemoteEntries(sessionId);
+    },
+    async downloadRemoteFile(remotePath: string) {
+      const sessionId = state.activeSessionId;
+      if (!sessionId) {
+        return;
+      }
+
+      const localPath = requestPathInput(t("files.downloadPrompt"), remotePathBaseName(remotePath));
+      if (!localPath) {
+        return;
+      }
+
+      await runMutation(() => desktopClient.downloadFileFromRemote(sessionId, remotePath, localPath));
+    },
+    async createRemoteDirectory() {
+      const sessionId = state.activeSessionId;
+      const currentPath = activeSessionCurrentPath;
+      if (!sessionId || !currentPath) {
+        return;
+      }
+
+      const directoryName = requestPathInput(t("files.newFolderPrompt"));
+      if (!directoryName) {
+        return;
+      }
+
+      const remotePath = joinRemotePath(currentPath, remotePathBaseName(directoryName));
+      await runMutation(() => desktopClient.createRemoteDirectory(sessionId, remotePath));
+      await refreshRemoteEntries(sessionId);
+    },
+    async renameRemoteEntry(entry: RemoteFileEntry) {
+      const sessionId = state.activeSessionId;
+      if (!sessionId) {
+        return;
+      }
+
+      const nextName = requestPathInput(t("files.renamePrompt", { name: entry.name }), entry.name);
+      if (!nextName) {
+        return;
+      }
+
+      const targetPath = joinRemotePath(parentRemotePath(entry.path), remotePathBaseName(nextName));
+      if (targetPath === entry.path) {
+        return;
+      }
+
+      await runMutation(() => desktopClient.renameRemoteEntry(sessionId, entry.path, targetPath));
+      await refreshRemoteEntries(sessionId);
+    },
+    async deleteRemoteEntry(entry: RemoteFileEntry) {
+      const sessionId = state.activeSessionId;
+      if (!sessionId) {
+        return;
+      }
+
+      const confirmed = requestConfirmInput(
+        t(entry.kind === "directory" ? "files.deleteDirectoryConfirm" : "files.deleteFileConfirm", {
+          name: entry.name,
+        }),
+      );
+      if (!confirmed) {
+        return;
+      }
+
+      await runMutation(() =>
+        desktopClient.deleteRemoteEntry(sessionId, entry.path, entry.kind === "directory"),
+      );
+      await refreshRemoteEntries(sessionId);
+    },
     async saveSnippet(input: Partial<CommandSnippet>) {
       const snippet: CommandSnippet = {
         id: input.id ?? createId("snippet"),
@@ -438,4 +566,56 @@ export function useWorkspaceApp() {
 
 export type WorkspaceController = ReturnType<typeof useWorkspaceApp>;
 export type WorkspaceViewState = WorkspaceState;
-export type WorkspaceSession = SessionTab;
+
+function requestPathInput(message: string, defaultValue = ""): string | null {
+  if (typeof window === "undefined" || typeof window.prompt !== "function") {
+    return null;
+  }
+
+  // Native desktop file dialogs can replace this prompt-based fallback later.
+  const value = window.prompt(message, defaultValue);
+  if (!value) {
+    return null;
+  }
+
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function requestConfirmInput(message: string): boolean {
+  if (typeof window === "undefined" || typeof window.confirm !== "function") {
+    return false;
+  }
+
+  return window.confirm(message);
+}
+
+function localPathBaseName(path: string): string {
+  const normalized = path.replace(/\\/g, "/");
+  const segments = normalized.split("/").filter(Boolean);
+  return segments[segments.length - 1] ?? path;
+}
+
+function remotePathBaseName(path: string): string {
+  const segments = path.split("/").filter(Boolean);
+  return segments[segments.length - 1] ?? path;
+}
+
+function joinRemotePath(directory: string, name: string): string {
+  if (directory === "/") {
+    return `/${name}`;
+  }
+
+  return `${directory.replace(/\/+$/, "")}/${name}`;
+}
+
+function parentRemotePath(path: string): string {
+  const trimmed = path.trim();
+  if (!trimmed || trimmed === "/") {
+    return "/";
+  }
+
+  const normalized = trimmed.replace(/\/+$/, "");
+  const lastSlashIndex = normalized.lastIndexOf("/");
+  return lastSlashIndex <= 0 ? "/" : normalized.slice(0, lastSlashIndex);
+}
