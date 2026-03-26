@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, type MutableRefObject } from "react";
 import type { WorkspaceController } from "../../../app/useWorkspaceApp";
 import { StatusBadge } from "../../../shared/components/StatusBadge";
 import { Panel } from "../../../shared/components/Panel";
 import { t } from "../../../shared/i18n";
+import { readClipboardText, writeClipboardText } from "../../../shared/lib/clipboard";
 import { formatTimestamp } from "../../../shared/lib/time";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
@@ -12,10 +13,16 @@ interface TerminalWorkspaceProps {
   controller: WorkspaceController;
 }
 
+interface TerminalHostActions {
+  copySelection: () => Promise<void>;
+  pasteClipboard: () => Promise<void>;
+  focus: () => void;
+}
+
 export function TerminalWorkspace({ controller }: TerminalWorkspaceProps) {
   const { state, activeSession } = controller;
-  const [commandInput, setCommandInput] = useState("");
   const hasOtherSessions = state.sessions.length > 1;
+  const hostActionsRef = useRef<TerminalHostActions | null>(null);
   // Only surface terminal dimensions when both axes are available.
   const sessionSize = useMemo(() => {
     const cols = activeSession?.terminalCols;
@@ -82,6 +89,20 @@ export function TerminalWorkspace({ controller }: TerminalWorkspaceProps) {
               <div className="button-row">
                 <button
                   className="ghost-button"
+                  onClick={() => void hostActionsRef.current?.copySelection()}
+                  type="button"
+                >
+                  {t("terminal.copy")}
+                </button>
+                <button
+                  className="ghost-button"
+                  onClick={() => void hostActionsRef.current?.pasteClipboard()}
+                  type="button"
+                >
+                  {t("terminal.paste")}
+                </button>
+                <button
+                  className="ghost-button"
                   onClick={() => void controller.reconnectSession(activeSession.id)}
                   type="button"
                 >
@@ -107,7 +128,10 @@ export function TerminalWorkspace({ controller }: TerminalWorkspaceProps) {
               <div className="terminal-host">
                 <TerminalHost
                   cursorStyle={state.settings.terminal.cursorStyle}
+                  hostActionsRef={hostActionsRef}
                   output={activeSession.lastOutput}
+                  onClearRequest={() => void controller.clearSessionOutput(activeSession.id)}
+                  onInput={(input) => void controller.sendSessionInput(activeSession.id, input)}
                   onResize={(cols, rows) => void controller.resizeSession(activeSession.id, cols, rows)}
                   theme={state.settings.terminal.theme}
                   fontFamily={state.settings.terminal.fontFamily}
@@ -115,27 +139,6 @@ export function TerminalWorkspace({ controller }: TerminalWorkspaceProps) {
                   lineHeight={state.settings.terminal.lineHeight}
                 />
               </div>
-              <form
-                className="terminal-input-row"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  const trimmed = commandInput.trim();
-                  if (!trimmed) {
-                    return;
-                  }
-                  void controller.sendSessionInput(activeSession.id, trimmed);
-                  setCommandInput("");
-                }}
-              >
-                <input
-                  onChange={(event) => setCommandInput(event.target.value)}
-                  placeholder={t("terminal.commandPlaceholder")}
-                  value={commandInput}
-                />
-                <button className="primary-button" type="submit">
-                  {t("terminal.send")}
-                </button>
-              </form>
             </>
           ) : (
             <div className="empty-stage">
@@ -169,6 +172,9 @@ interface TerminalHostProps {
   fontSize: number;
   lineHeight: number;
   cursorStyle: "block" | "line";
+  hostActionsRef: MutableRefObject<TerminalHostActions | null>;
+  onClearRequest?: () => void;
+  onInput?: (input: string) => void;
   onResize?: (cols: number, rows: number) => void;
 }
 
@@ -179,6 +185,9 @@ export function TerminalHost({
   fontSize,
   lineHeight,
   cursorStyle,
+  hostActionsRef,
+  onClearRequest,
+  onInput,
   onResize,
 }: TerminalHostProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -186,6 +195,44 @@ export function TerminalHost({
   const fitAddonRef = useRef<FitAddon | null>(null);
   const lastOutputRef = useRef<string>("");
   const lastResizeRef = useRef<string>("");
+  const inputHandlerRef = useRef(onInput);
+  const resizeHandlerRef = useRef(onResize);
+  const clearHandlerRef = useRef(onClearRequest);
+
+  useEffect(() => {
+    inputHandlerRef.current = onInput;
+    resizeHandlerRef.current = onResize;
+    clearHandlerRef.current = onClearRequest;
+  }, [onClearRequest, onInput, onResize]);
+
+  useEffect(() => {
+    hostActionsRef.current = {
+      copySelection: async () => {
+        const terminal = terminalRef.current;
+        const selection = terminal?.hasSelection() ? terminal.getSelection() : "";
+        if (!selection) {
+          return;
+        }
+        await writeClipboardText(selection);
+        terminal?.focus();
+      },
+      pasteClipboard: async () => {
+        const text = await readClipboardText();
+        if (!text) {
+          return;
+        }
+        inputHandlerRef.current?.(text);
+        terminalRef.current?.focus();
+      },
+      focus: () => {
+        terminalRef.current?.focus();
+      },
+    };
+
+    return () => {
+      hostActionsRef.current = null;
+    };
+  }, [hostActionsRef]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -199,7 +246,7 @@ export function TerminalHost({
       lineHeight,
       cursorBlink: true,
       cursorStyle: cursorStyle === "line" ? "bar" : "block",
-      disableStdin: true,
+      disableStdin: false,
       scrollback: 1000,
       theme: terminalColorPalettes[theme],
     });
@@ -207,9 +254,36 @@ export function TerminalHost({
     terminal.loadAddon(fitAddon);
     terminal.open(container);
     fitAddon.fit();
+    terminal.focus();
 
     terminalRef.current = terminal;
     fitAddonRef.current = fitAddon;
+
+    const disposable = terminal.onData((data) => {
+      inputHandlerRef.current?.(data);
+    });
+    terminal.attachCustomKeyEventHandler((event) => {
+      const isAccel = event.ctrlKey || event.metaKey;
+      const key = event.key.toLowerCase();
+
+      if (isAccel && event.shiftKey && key === "c") {
+        void hostActionsRef.current?.copySelection();
+        return false;
+      }
+
+      if (isAccel && event.shiftKey && key === "v") {
+        void hostActionsRef.current?.pasteClipboard();
+        return false;
+      }
+
+      if (isAccel && !event.shiftKey && key === "l") {
+        clearHandlerRef.current?.();
+        terminal.clear();
+        return false;
+      }
+
+      return true;
+    });
 
     const handleResize = () => {
       fitAddon.fit();
@@ -217,7 +291,7 @@ export function TerminalHost({
 
       if (terminal.cols > 0 && terminal.rows > 0 && sizeKey !== lastResizeRef.current) {
         lastResizeRef.current = sizeKey;
-        onResize?.(terminal.cols, terminal.rows);
+        resizeHandlerRef.current?.(terminal.cols, terminal.rows);
       }
     };
 
@@ -226,11 +300,12 @@ export function TerminalHost({
 
     return () => {
       window.removeEventListener("resize", handleResize);
+      disposable.dispose();
       terminal.dispose();
       terminalRef.current = null;
       fitAddonRef.current = null;
     };
-  }, [cursorStyle, fontFamily, fontSize, lineHeight, onResize, theme]);
+  }, [cursorStyle, fontFamily, fontSize, lineHeight, theme]);
 
   useEffect(() => {
     const terminal = terminalRef.current;
@@ -257,11 +332,23 @@ export function TerminalHost({
     if (!terminal || lastOutputRef.current === output) {
       return;
     }
-    terminal.reset();
-    const normalized = output.replace(/\r?\n/g, "\r\n");
-    if (normalized) {
-      terminal.write(normalized);
+
+    const previous = lastOutputRef.current;
+    const normalizedFull = output.replace(/\r?\n/g, "\r\n");
+
+    if (output.length < previous.length || !output.startsWith(previous)) {
+      terminal.reset();
+      if (normalizedFull) {
+        terminal.write(normalizedFull);
+      }
+    } else {
+      const delta = output.slice(previous.length);
+      const normalizedDelta = delta.replace(/\r?\n/g, "\r\n");
+      if (normalizedDelta) {
+        terminal.write(normalizedDelta);
+      }
     }
+
     terminal.scrollToBottom();
     lastOutputRef.current = output;
     fitAddonRef.current?.fit();

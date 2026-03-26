@@ -246,20 +246,18 @@ impl RusshSshService {
         })
     }
 
-    /// Sends terminal input to the remote PTY and appends a newline when needed.
+    /// Sends raw terminal input bytes to the remote PTY.
     pub async fn send_input(
         &self,
         writer: &ChannelWriteHalf<client::Msg>,
         input: &str,
     ) -> AppResult<()> {
-        let trimmed = input.trim_end_matches(['\r', '\n']);
-        if trimmed.is_empty() {
+        if input.is_empty() {
             return Ok(());
         }
 
-        let payload = format!("{trimmed}\n");
         writer
-            .data(payload.as_bytes())
+            .data(input.as_bytes())
             .await
             .map_err(|error| classify_ssh_error("ssh_write_failed", "发送终端输入失败", error))?;
         Ok(())

@@ -495,7 +495,7 @@ impl AppStore {
     fn clear_session_output(&mut self, session_id: &str) -> AppResult<()> {
         let session_title = sessions::clear_session_output(&mut self.sessions, session_id)?;
         self.record_activity(format!("已清空会话 {} 的输出。", session_title));
-        self.persist()
+        Ok(())
     }
 
     fn close_other_sessions(&mut self, session_id: &str) -> AppResult<Vec<LiveSessionRuntime>> {
@@ -514,8 +514,6 @@ impl AppStore {
         }
 
         self.record_activity(format!("已关闭 {} 个其它会话。", removed));
-        self.persist()?;
-
         Ok(runtimes)
     }
 
@@ -530,7 +528,7 @@ impl AppStore {
             "已将会话 {} 调整为 {}x{}。",
             session_title, cols, rows
         ));
-        self.persist()
+        Ok(())
     }
 
     fn send_session_input(&mut self, session_id: &str, input: &str) -> AppResult<()> {
@@ -539,18 +537,13 @@ impl AppStore {
             .get(session_id)
             .ok_or_else(|| AppError::new("session_not_found", session_id.to_string()))?;
         runtime.send_input(input)?;
-        let session_title = {
-            let session = self
-                .sessions
-                .iter_mut()
-                .find(|item| item.id == session_id)
-                .ok_or_else(|| AppError::new("session_not_found", session_id.to_string()))?;
-            let session_title = session.title.clone();
-            session.updated_at = now_iso();
-            session_title
-        };
-        self.record_activity(format!("已向 {} 发送命令。", session_title));
-        self.persist()
+        let session = self
+            .sessions
+            .iter_mut()
+            .find(|item| item.id == session_id)
+            .ok_or_else(|| AppError::new("session_not_found", session_id.to_string()))?;
+        session.updated_at = now_iso();
+        Ok(())
     }
 
     fn run_snippet_on_session(&mut self, session_id: &str, snippet_id: &str) -> AppResult<()> {

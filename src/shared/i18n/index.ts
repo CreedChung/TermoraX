@@ -91,6 +91,8 @@ const messages: Record<AppLocale, MessageSchema> = {
     "terminal.toggleTheme": "主题",
     "terminal.togglePanel": "侧栏",
     "terminal.openHint": "打开一个连接即可开始。",
+    "terminal.copy": "复制",
+    "terminal.paste": "粘贴",
     "terminal.reconnect": "重连",
     "terminal.clearOutput": "清屏",
     "terminal.closeOthers": "关闭其它",

@@ -1,10 +1,19 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type { SessionTab } from "../../../entities/domain";
 import { defaultAppSettings } from "../../settings/model/defaults";
 import type { WorkspaceController, WorkspaceViewState } from "../../../app/useWorkspaceApp";
 import { TerminalWorkspace } from "./TerminalWorkspace";
+import { readClipboardText, writeClipboardText } from "../../../shared/lib/clipboard";
+
+const terminalOnDataHandlers: Array<(data: string) => void> = [];
+const terminalKeyHandlers: Array<(event: KeyboardEvent) => boolean> = [];
+let terminalSelection = "selected-output";
+vi.mock("../../../shared/lib/clipboard", () => ({
+  writeClipboardText: vi.fn<(text: string) => Promise<boolean>>().mockResolvedValue(true),
+  readClipboardText: vi.fn<() => Promise<string>>().mockResolvedValue("pasted-command"),
+}));
 
 vi.mock("@xterm/addon-fit", () => ({
   FitAddon: class MockFitAddon {
@@ -26,6 +35,23 @@ vi.mock("@xterm/xterm", () => ({
 
     loadAddon() {}
     open() {}
+    focus() {}
+    attachCustomKeyEventHandler(handler: (event: KeyboardEvent) => boolean) {
+      terminalKeyHandlers.push(handler);
+    }
+    onData(handler: (data: string) => void) {
+      terminalOnDataHandlers.push(handler);
+      return {
+        dispose() {},
+      };
+    }
+    hasSelection() {
+      return Boolean(terminalSelection);
+    }
+    getSelection() {
+      return terminalSelection;
+    }
+    clear() {}
     reset() {}
     write() {}
     scrollToBottom() {}
@@ -35,6 +61,10 @@ vi.mock("@xterm/xterm", () => ({
 
 afterEach(() => {
   vi.clearAllMocks();
+  terminalOnDataHandlers.length = 0;
+  terminalKeyHandlers.length = 0;
+  terminalSelection = "selected-output";
+  vi.mocked(readClipboardText).mockResolvedValue("pasted-command");
 });
 
 const sampleSession: SessionTab = {
@@ -136,19 +166,79 @@ describe("TerminalWorkspace", () => {
     expect(screen.getByTestId("terminal-host")).toBeInTheDocument();
   });
 
-  test("submits command input and clears the field", async () => {
+  test("forwards direct terminal input to the controller", async () => {
+    const sendSessionInput = vi.fn();
+    const controller = createController(sampleSession, { sendSessionInput });
+
+    render(<TerminalWorkspace controller={controller} />);
+    expect(terminalOnDataHandlers).toHaveLength(1);
+
+    act(() => {
+      terminalOnDataHandlers[0]("l");
+      terminalOnDataHandlers[0]("s");
+      terminalOnDataHandlers[0]("\r");
+    });
+
+    expect(sendSessionInput).toHaveBeenCalledTimes(3);
+    expect(sendSessionInput).toHaveBeenNthCalledWith(1, sampleSession.id, "l");
+    expect(sendSessionInput).toHaveBeenNthCalledWith(2, sampleSession.id, "s");
+    expect(sendSessionInput).toHaveBeenNthCalledWith(3, sampleSession.id, "\r");
+  });
+
+  test("supports copy and paste terminal actions", async () => {
     const sendSessionInput = vi.fn();
     const controller = createController(sampleSession, { sendSessionInput });
 
     render(<TerminalWorkspace controller={controller} />);
 
     const user = userEvent.setup();
-    const commandInput = screen.getByPlaceholderText("输入命令");
-    await user.type(commandInput, " ls -al  ");
-    await user.click(screen.getByRole("button", { name: "发送" }));
+    await user.click(screen.getByRole("button", { name: "复制" }));
+    await user.click(screen.getByRole("button", { name: "粘贴" }));
 
-    expect(sendSessionInput).toHaveBeenCalledWith(sampleSession.id, "ls -al");
-    expect(commandInput).toHaveValue("");
+    await waitFor(() => {
+      expect(writeClipboardText).toHaveBeenCalledWith("selected-output");
+      expect(readClipboardText).toHaveBeenCalled();
+      expect(sendSessionInput).toHaveBeenCalledWith(sampleSession.id, "pasted-command");
+    });
+  });
+
+  test("supports terminal shortcuts for clear and clipboard actions", async () => {
+    const clearSessionOutput = vi.fn();
+    const sendSessionInput = vi.fn();
+    const controller = createController(sampleSession, {
+      clearSessionOutput,
+      sendSessionInput,
+    });
+
+    render(<TerminalWorkspace controller={controller} />);
+    expect(terminalKeyHandlers).toHaveLength(1);
+
+    await act(async () => {
+      terminalKeyHandlers[0]({
+        ctrlKey: true,
+        metaKey: false,
+        shiftKey: false,
+        key: "l",
+      } as KeyboardEvent);
+      terminalKeyHandlers[0]({
+        ctrlKey: true,
+        metaKey: false,
+        shiftKey: true,
+        key: "c",
+      } as KeyboardEvent);
+      terminalKeyHandlers[0]({
+        ctrlKey: true,
+        metaKey: false,
+        shiftKey: true,
+        key: "v",
+      } as KeyboardEvent);
+    });
+
+    await waitFor(() => {
+      expect(clearSessionOutput).toHaveBeenCalledWith(sampleSession.id);
+      expect(writeClipboardText).toHaveBeenCalledWith("selected-output");
+      expect(sendSessionInput).toHaveBeenCalledWith(sampleSession.id, "pasted-command");
+    });
   });
 
   test("renders the empty stage copy when no session is active", () => {

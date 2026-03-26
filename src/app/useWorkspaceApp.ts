@@ -348,7 +348,7 @@ export function useWorkspaceApp() {
       await runMutation(() => desktopClient.resizeSession(sessionId, cols, rows));
     },
     async sendSessionInput(sessionId: string, input: string) {
-      if (!input.trim()) {
+      if (!input) {
         return;
       }
       await runMutation(() => desktopClient.sendSessionInput(sessionId, input));
