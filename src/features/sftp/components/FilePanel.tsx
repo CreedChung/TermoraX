@@ -40,10 +40,30 @@ function formatFileSize(value: number): string {
   }
 
   if (unitIndex === 0) {
-    return `${Math.round(size)} ${units[unitIndex]}`;
+    return `${Math.round(size)}${units[unitIndex]}`;
   }
 
   return `${size.toFixed(1)} ${units[unitIndex]}`;
+}
+
+function normalizeIdentityPart(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
+}
+
+function formatOwnerGroup(owner: string | null | undefined, group: string | null | undefined): string {
+  const normalizedOwner = normalizeIdentityPart(owner);
+  const normalizedGroup = normalizeIdentityPart(group);
+
+  if (!normalizedOwner && !normalizedGroup) {
+    return "-/-";
+  }
+
+  if (normalizedOwner === "0" && normalizedGroup === "0") {
+    return "root/root";
+  }
+
+  return `${normalizedOwner ?? "-"}/${normalizedGroup ?? "-"}`;
 }
 
 function resolveRootDirectorySelection(currentPath: string | null, rootEntries: RemoteFileEntry[]): string | null {
@@ -283,18 +303,13 @@ export function FilePanel(props: FilePanelProps) {
                   <span>{t("files.size")}</span>
                   <span>{t("files.type")}</span>
                   <span>{t("files.modifiedAt")}</span>
-                  <span>{t("files.createdAt")}</span>
-                  <span>{t("files.permissions")}</span>
-                  <span>{t("files.ownerGroup")}</span>
                   <span>{t("files.actions")}</span>
                 </header>
                 <div className="file-table__body">
                 {entries.map((entry) => {
                   const typeLabel = entry.kind === "file" ? t("files.file") : t("files.folder");
-                  const sizeLabel =
-                    entry.kind === "file" ? formatFileSize(entry.size) : t("files.folderSizeUnknown");
-                  const owner = entry.owner ?? t("files.unknown");
-                  const group = entry.group ?? t("files.unknown");
+                  const sizeLabel = formatFileSize(entry.size);
+                  const ownerGroup = formatOwnerGroup(entry.owner, entry.group);
                   const permissions = entry.permissions ?? t("files.unknown");
                   const isSelected = selectedEntryPath === entry.path;
                   return (
@@ -315,18 +330,18 @@ export function FilePanel(props: FilePanelProps) {
                         <div className="file-table__name-copy">
                           <strong>{entry.name}</strong>
                           <p>{entry.path}</p>
+                          <span className="file-table__name-meta">
+                            {entry.createdAt ? `${t("files.createdAt")} ${formatTimestamp(entry.createdAt)}` : null}
+                            {entry.createdAt ? " · " : ""}
+                            {t("files.permissions")} {permissions}
+                            {" · "}
+                            {t("files.ownerGroup")} {ownerGroup}
+                          </span>
                         </div>
                       </div>
                       <span className="file-table__cell">{sizeLabel}</span>
                       <span className="file-table__cell">{typeLabel}</span>
                       <span className="file-table__cell">{formatTimestamp(entry.modifiedAt)}</span>
-                      <span className="file-table__cell">
-                        {entry.createdAt ? formatTimestamp(entry.createdAt) : "-"}
-                      </span>
-                      <span className="file-table__cell">{permissions}</span>
-                      <span className="file-table__cell">
-                        {owner}/{group}
-                      </span>
                       <div className="file-table__cell file-table__cell--actions">
                         {entry.kind === "file" && onDownload ? (
                           <button

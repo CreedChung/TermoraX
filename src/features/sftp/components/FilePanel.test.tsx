@@ -42,6 +42,30 @@ const rootDir: RemoteFileEntry = {
   group: "root",
 };
 
+const sampleUidGidDir: RemoteFileEntry = {
+  name: "system",
+  path: "/system",
+  kind: "directory",
+  size: 0,
+  modifiedAt: sampleTimestamp,
+  createdAt: sampleTimestamp,
+  permissions: "755",
+  owner: "0",
+  group: "0",
+};
+
+const sampleUnknownOwnerDir: RemoteFileEntry = {
+  name: "lost+found",
+  path: "/lost+found",
+  kind: "directory",
+  size: 0,
+  modifiedAt: sampleTimestamp,
+  createdAt: sampleTimestamp,
+  permissions: "700",
+  owner: "",
+  group: "",
+};
+
 describe("FilePanel", () => {
   it("renders loading state", () => {
     render(<FilePanel entries={[]} rootEntries={[]} currentPath={null} loading />);
@@ -66,9 +90,23 @@ describe("FilePanel", () => {
     expect(screen.getAllByText("文件").length).toBeGreaterThan(0);
     expect(screen.getByText("deploy")).toBeInTheDocument();
     expect(screen.getByText("README.md")).toBeInTheDocument();
+    expect(screen.getByText("0B")).toBeInTheDocument();
     expect(screen.getByText("1.4 KB")).toBeInTheDocument();
-    expect(screen.getByText("644")).toBeInTheDocument();
+    expect(screen.getByText(/权限 644/)).toBeInTheDocument();
     expect(screen.getByText("2 项")).toBeInTheDocument();
+  });
+
+  it("formats owner and group fallbacks for root ids and unknown values", () => {
+    render(
+      <FilePanel
+        entries={[sampleUidGidDir, sampleUnknownOwnerDir]}
+        rootEntries={[rootDir]}
+        currentPath="/"
+      />,
+    );
+
+    expect(screen.getByText(/所有者\/分组 root\/root/)).toBeInTheDocument();
+    expect(screen.getByText(/所有者\/分组 -\/-/)).toBeInTheDocument();
   });
 
   it("keeps parent action disabled when there is no current path or during loading", async () => {

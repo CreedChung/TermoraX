@@ -197,9 +197,25 @@ textarea {
   min-height: 260px;
 }
 
+.workspace-main-divider {
+  flex: 0 0 10px;
+  border-radius: 999px;
+  cursor: row-resize;
+  position: relative;
+  background: linear-gradient(90deg, transparent, var(--surface-alt), transparent);
+}
+
+.workspace-main-divider::before {
+  content: "";
+  position: absolute;
+  inset: 4px 24%;
+  border-radius: 999px;
+  background: rgba(242, 160, 92, 0.18);
+}
+
 .workspace-bottom-panel {
-  flex: 1.2 1 420px;
-  min-height: 420px;
+  flex: 0 0 auto;
+  min-height: 320px;
   max-height: none;
 }
 
@@ -421,7 +437,6 @@ textarea {
 
 .file-panel__tabs-row {
   display: flex;
-  display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 12px;
@@ -602,9 +617,9 @@ textarea {
 .file-table__header,
 .file-table__row {
   display: grid;
-  grid-template-columns: minmax(220px, 2.4fr) minmax(80px, 0.9fr) minmax(70px, 0.8fr) minmax(140px, 1.2fr) minmax(140px, 1.2fr) minmax(80px, 0.8fr) minmax(120px, 1fr) minmax(170px, 1.2fr);
+  grid-template-columns: minmax(280px, 3.2fr) minmax(84px, 0.9fr) minmax(72px, 0.8fr) minmax(132px, 1fr) minmax(170px, 1.2fr);
   gap: 10px;
-  align-items: center;
+  align-items: start;
 }
 
 .file-table__header {
@@ -643,7 +658,7 @@ textarea {
 
 .file-table__cell--name {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 10px;
 }
 
@@ -667,6 +682,16 @@ textarea {
 .file-table__name-copy p {
   margin: 4px 0 0;
   color: var(--muted);
+}
+
+.file-table__name-meta {
+  display: block;
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: normal;
+  word-break: break-word;
 }
 
 .file-table__cell--actions {
@@ -996,9 +1021,13 @@ textarea {
     min-height: 220px;
   }
 
+  .workspace-main-divider {
+    display: none;
+  }
+
   .workspace-bottom-panel {
-    flex-basis: 320px;
     min-height: 320px;
+    height: auto !important;
   }
 
   .file-panel__split {

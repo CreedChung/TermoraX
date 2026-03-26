@@ -1,3 +1,4 @@
+import { useCallback, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import type { WorkspaceController } from "../../../app/useWorkspaceApp";
 import { ConnectionSidebar } from "../../connections/components/ConnectionSidebar";
 import { SnippetPanel } from "../../snippets/components/SnippetPanel";
@@ -14,10 +15,43 @@ interface WorkspaceShellProps {
 export function WorkspaceShell({ controller }: WorkspaceShellProps) {
   const { state, activeSession } = controller;
   const localeState = getLocaleState();
+  const mainStackRef = useRef<HTMLDivElement | null>(null);
+  const [bottomPanelHeight, setBottomPanelHeight] = useState(420);
   const bottomPanelVisible =
     state.settings.workspace.rightPanelVisible && state.settings.workspace.rightPanel === "files";
   const sidePanelVisible =
     state.settings.workspace.rightPanelVisible && state.settings.workspace.rightPanel !== "files";
+
+  const handleBottomSplitPointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (!mainStackRef.current || typeof window === "undefined") {
+        return;
+      }
+
+      event.preventDefault();
+      const startY = event.clientY;
+      const startHeight = bottomPanelHeight;
+      const stackHeight = mainStackRef.current.getBoundingClientRect().height;
+      const minBottomHeight = 280;
+      const minTerminalHeight = 220;
+      const maxBottomHeight = Math.max(stackHeight - minTerminalHeight, minBottomHeight);
+
+      const onMove = (moveEvent: PointerEvent) => {
+        const deltaY = moveEvent.clientY - startY;
+        const nextHeight = Math.min(Math.max(startHeight - deltaY, minBottomHeight), maxBottomHeight);
+        setBottomPanelHeight(nextHeight);
+      };
+
+      const onUp = () => {
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+      };
+
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+    },
+    [bottomPanelHeight],
+  );
 
   return (
     <div className={`workspace workspace--${state.settings.terminal.theme}`}>
@@ -55,10 +89,17 @@ export function WorkspaceShell({ controller }: WorkspaceShellProps) {
         </aside>
 
         <main className="workspace-main">
-          <div className="workspace-main-stack">
+          <div className="workspace-main-stack" ref={mainStackRef}>
             <TerminalWorkspace controller={controller} />
             {bottomPanelVisible ? (
-              <section className="workspace-bottom-panel">
+              <>
+                <div
+                  className="workspace-main-divider"
+                  role="separator"
+                  aria-orientation="horizontal"
+                  onPointerDown={handleBottomSplitPointerDown}
+                />
+                <section className="workspace-bottom-panel" style={{ height: `${bottomPanelHeight}px` }}>
                 <FilePanel
                   currentPath={activeSession?.currentPath ?? null}
                   entries={state.remoteEntries}
@@ -73,7 +114,8 @@ export function WorkspaceShell({ controller }: WorkspaceShellProps) {
                   onRename={controller.renameRemoteEntry}
                   onDelete={controller.deleteRemoteEntry}
                 />
-              </section>
+                </section>
+              </>
             ) : null}
           </div>
         </main>
