@@ -818,7 +818,7 @@ impl AppStore {
             session.status = "connected".into();
             session.current_path = Some("/".into());
             session.last_output = format!(
-                "已重新连接到 {}@{}:{}\r\n\r\n[TermoraX] 真实 SSH 终端已恢复。",
+                "已重新连接到 {}@{}:{}\r\n\r\n",
                 connection.username, connection.host, connection.port
             );
             session.updated_at = now_iso();
