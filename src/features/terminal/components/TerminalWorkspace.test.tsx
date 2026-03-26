@@ -201,6 +201,30 @@ describe("TerminalWorkspace", () => {
     expect(sendSessionInput).toHaveBeenNthCalledWith(3, sampleSession.id, "\r");
   });
 
+  test("pressing enter on a disconnected session triggers reconnect instead of raw input", async () => {
+    const reconnectSession = vi.fn();
+    const sendSessionInput = vi.fn();
+    const controller = createController(
+      {
+        ...sampleSession,
+        status: "disconnected",
+      },
+      { reconnectSession, sendSessionInput },
+    );
+
+    render(<TerminalWorkspace controller={controller} />);
+    expect(terminalOnDataHandlers).toHaveLength(1);
+
+    act(() => {
+      terminalOnDataHandlers[0]("l");
+      terminalOnDataHandlers[0]("\r");
+    });
+
+    expect(sendSessionInput).not.toHaveBeenCalled();
+    expect(reconnectSession).toHaveBeenCalledTimes(1);
+    expect(reconnectSession).toHaveBeenCalledWith(sampleSession.id);
+  });
+
   test("supports copy and paste terminal actions", async () => {
     const sendSessionInput = vi.fn();
     const controller = createController(sampleSession, { sendSessionInput });

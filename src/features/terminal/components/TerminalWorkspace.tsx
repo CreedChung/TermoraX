@@ -33,6 +33,25 @@ export function TerminalWorkspace({ controller }: TerminalWorkspaceProps) {
     return { cols, rows };
   }, [activeSession?.terminalCols, activeSession?.terminalRows]);
 
+  function handleTerminalInput(input: string) {
+    if (!activeSession || !input) {
+      return;
+    }
+
+    if (activeSession.status === "connecting") {
+      return;
+    }
+
+    if (activeSession.status === "disconnected") {
+      if (input.includes("\r") || input.includes("\n")) {
+        void controller.reconnectSession(activeSession.id);
+      }
+      return;
+    }
+
+    void controller.sendSessionInput(activeSession.id, input);
+  }
+
   return (
     <Panel
       title={t("terminal.title")}
@@ -131,7 +150,7 @@ export function TerminalWorkspace({ controller }: TerminalWorkspaceProps) {
                   hostActionsRef={hostActionsRef}
                   output={activeSession.lastOutput}
                   onClearRequest={() => void controller.clearSessionOutput(activeSession.id)}
-                  onInput={(input) => void controller.sendSessionInput(activeSession.id, input)}
+                  onInput={handleTerminalInput}
                   onResize={(cols, rows) => void controller.resizeSession(activeSession.id, cols, rows)}
                   theme={state.settings.terminal.theme}
                   fontFamily={state.settings.terminal.fontFamily}
