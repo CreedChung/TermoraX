@@ -322,10 +322,17 @@ function createMockSession(connectionId: string): BootstrapState {
   }
 
   const now = new Date().toISOString();
+  const existingTitles = new Set(mockState.sessions.map((item) => item.title));
+  let sessionTitle = connection.name;
+  let suffix = 1;
+  while (existingTitles.has(sessionTitle)) {
+    sessionTitle = `${connection.name}(${suffix})`;
+    suffix += 1;
+  }
   const session = {
     id: createId("session"),
     connectionId,
-    title: connection.name,
+    title: sessionTitle,
     protocol: "ssh" as const,
     status: "connected" as const,
     currentPath: "/",

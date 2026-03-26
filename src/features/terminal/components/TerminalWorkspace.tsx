@@ -146,6 +146,8 @@ export function TerminalWorkspace({ controller }: TerminalWorkspaceProps) {
               </div>
               <div className="terminal-host">
                 <TerminalHost
+                  key={activeSession.id}
+                  sessionId={activeSession.id}
                   cursorStyle={state.settings.terminal.cursorStyle}
                   hostActionsRef={hostActionsRef}
                   output={activeSession.lastOutput}
@@ -185,6 +187,7 @@ const terminalColorPalettes: Record<TerminalTheme, { background: string; foregro
 };
 
 interface TerminalHostProps {
+  sessionId: string;
   output: string;
   theme: TerminalTheme;
   fontFamily: string;
@@ -197,7 +200,10 @@ interface TerminalHostProps {
   onResize?: (cols: number, rows: number) => void;
 }
 
+const INITIAL_VIEWPORT_LOCK_MS = 1200;
+
 export function TerminalHost({
+  sessionId,
   output,
   theme,
   fontFamily,
@@ -214,6 +220,8 @@ export function TerminalHost({
   const fitAddonRef = useRef<FitAddon | null>(null);
   const lastOutputRef = useRef<string>("");
   const lastResizeRef = useRef<string>("");
+  const shouldScrollToTopRef = useRef(true);
+  const initialViewportLockTimerRef = useRef<number | null>(null);
   const inputHandlerRef = useRef(onInput);
   const resizeHandlerRef = useRef(onResize);
   const clearHandlerRef = useRef(onClearRequest);
@@ -252,6 +260,14 @@ export function TerminalHost({
       hostActionsRef.current = null;
     };
   }, [hostActionsRef]);
+
+  useEffect(() => {
+    lastOutputRef.current = "";
+    shouldScrollToTopRef.current = true;
+    if (initialViewportLockTimerRef.current != null && typeof window !== "undefined") {
+      window.clearTimeout(initialViewportLockTimerRef.current);
+    }
+  }, [sessionId]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -319,6 +335,7 @@ export function TerminalHost({
         return;
       }
 
+      shouldScrollToTopRef.current = false;
       const lineDelta = Math.trunc(event.deltaY / 40) || (event.deltaY > 0 ? 1 : -1);
       terminal.scrollLines(lineDelta);
       event.preventDefault();
@@ -331,6 +348,10 @@ export function TerminalHost({
     return () => {
       window.removeEventListener("resize", handleResize);
       container.removeEventListener("wheel", handleWheel);
+      if (initialViewportLockTimerRef.current != null) {
+        window.clearTimeout(initialViewportLockTimerRef.current);
+        initialViewportLockTimerRef.current = null;
+      }
       disposable.dispose();
       terminal.dispose();
       terminalRef.current = null;
@@ -366,21 +387,37 @@ export function TerminalHost({
 
     const previous = lastOutputRef.current;
     const normalizedFull = output.replace(/\r?\n/g, "\r\n");
+    const didResetOutput = output.length < previous.length || !output.startsWith(previous);
+    if (didResetOutput) {
+      shouldScrollToTopRef.current = true;
+    }
+    const keepViewportAtTop = shouldScrollToTopRef.current;
+    const afterWrite = () => {
+      if (keepViewportAtTop) {
+        terminal.scrollToTop();
+        if (typeof window !== "undefined") {
+          if (initialViewportLockTimerRef.current != null) {
+            window.clearTimeout(initialViewportLockTimerRef.current);
+          }
+          initialViewportLockTimerRef.current = window.setTimeout(() => {
+            shouldScrollToTopRef.current = false;
+            initialViewportLockTimerRef.current = null;
+          }, INITIAL_VIEWPORT_LOCK_MS);
+        }
+      }
+      fitAddonRef.current?.fit();
+    };
 
-    if (output.length < previous.length || !output.startsWith(previous)) {
+    if (didResetOutput) {
       terminal.reset();
       if (normalizedFull) {
-        terminal.write(normalizedFull, () => {
-          fitAddonRef.current?.fit();
-        });
+        terminal.write(normalizedFull, afterWrite);
       }
     } else {
       const delta = output.slice(previous.length);
       const normalizedDelta = delta.replace(/\r?\n/g, "\r\n");
       if (normalizedDelta) {
-        terminal.write(normalizedDelta, () => {
-          fitAddonRef.current?.fit();
-        });
+        terminal.write(normalizedDelta, afterWrite);
       }
     }
 

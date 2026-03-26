@@ -766,8 +766,10 @@ impl AppStore {
             stored.last_connected_at = Some(now_iso());
         }
 
+        let session_title = sessions::next_session_title(&self.sessions, &connection.name);
         let session = sessions::open_connected_session(
             connection,
+            session_title,
             format!(
                 "已连接到 {}@{}:{}\r\n\r\n",
                 connection.username, connection.host, connection.port

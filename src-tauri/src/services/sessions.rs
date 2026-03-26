@@ -9,6 +9,7 @@ pub const DEFAULT_TERMINAL_ROWS: u16 = 32;
 /// Creates a connected SSH session snapshot backed by a real or simulated transport.
 pub fn open_connected_session(
     connection: &ConnectionProfile,
+    title: String,
     initial_output: String,
     terminal_cols: u16,
     terminal_rows: u16,
@@ -18,7 +19,7 @@ pub fn open_connected_session(
     SessionTab {
         id: next_id("session"),
         connection_id: connection.id.clone(),
-        title: connection.name.clone(),
+        title,
         protocol: "ssh".into(),
         status: "connected".into(),
         current_path: Some("/".into()),
@@ -35,6 +36,7 @@ pub fn open_connected_session(
 pub fn open_simulated_session(connection: &ConnectionProfile) -> SessionTab {
     open_connected_session(
         connection,
+        connection.name.clone(),
         format!(
             "已连接到 {}@{}:{}\n\n[模拟器] SSH 传输层当前仍为桩实现。\n[模拟器] Rust 命令边界、持久化与工作台生命周期已经接通。",
             connection.username, connection.host, connection.port
@@ -42,6 +44,27 @@ pub fn open_simulated_session(connection: &ConnectionProfile) -> SessionTab {
         DEFAULT_TERMINAL_COLS,
         DEFAULT_TERMINAL_ROWS,
     )
+}
+
+/// Builds a stable session tab title and appends a numeric suffix when the base title is already in use.
+pub fn next_session_title(existing_sessions: &[SessionTab], base_title: &str) -> String {
+    let base_title = base_title.trim();
+    if base_title.is_empty() {
+        return "会话".into();
+    }
+
+    if !existing_sessions.iter().any(|session| session.title == base_title) {
+        return base_title.to_string();
+    }
+
+    let mut suffix = 1usize;
+    loop {
+        let candidate = format!("{}({})", base_title, suffix);
+        if !existing_sessions.iter().any(|session| session.title == candidate) {
+            return candidate;
+        }
+        suffix += 1;
+    }
 }
 
 /// Appends simulated terminal input to a session transcript.
@@ -194,8 +217,8 @@ fn now_millis() -> String {
 mod tests {
     use super::{
         append_session_output, append_simulated_input, clear_session_output, close_other_sessions,
-        open_connected_session, open_simulated_session, reconnect_session, resize_session, set_session_status,
-        DEFAULT_TERMINAL_COLS, DEFAULT_TERMINAL_ROWS,
+        next_session_title, open_connected_session, open_simulated_session, reconnect_session, resize_session,
+        set_session_status, DEFAULT_TERMINAL_COLS, DEFAULT_TERMINAL_ROWS,
     };
     use crate::models::ConnectionProfile;
 
@@ -240,11 +263,22 @@ mod tests {
 
     #[test]
     fn open_connected_session_supports_custom_initial_output() {
-        let session = open_connected_session(&connection(), "ready".into(), 80, 24);
+        let session = open_connected_session(&connection(), "测试主机".into(), "ready".into(), 80, 24);
 
         assert_eq!(session.last_output, "ready");
         assert_eq!(session.terminal_cols, 80);
         assert_eq!(session.terminal_rows, 24);
+    }
+
+    #[test]
+    fn next_session_title_adds_numeric_suffix_for_duplicate_titles() {
+        let existing = vec![
+            open_connected_session(&connection(), "测试主机".into(), "ready".into(), 80, 24),
+            open_connected_session(&connection(), "测试主机(1)".into(), "ready".into(), 80, 24),
+        ];
+
+        assert_eq!(next_session_title(&existing, "测试主机"), "测试主机(2)");
+        assert_eq!(next_session_title(&existing, "其它会话"), "其它会话");
     }
 
     #[test]
