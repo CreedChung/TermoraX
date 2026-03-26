@@ -20,10 +20,35 @@
   --success: #6fcf97;
   --danger: #ff8d7d;
   --shadow: 0 20px 40px rgba(0, 0, 0, 0.28);
+  --scrollbar-thumb: rgba(242, 160, 92, 0.38);
+  --scrollbar-track: rgba(255, 255, 255, 0.04);
 }
 
 * {
   box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+  border-radius: 999px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(242, 160, 92, 0.56);
 }
 
 html,
@@ -158,6 +183,7 @@ textarea {
   display: grid;
   grid-template-columns: minmax(320px, 360px) minmax(0, 1fr) minmax(280px, 340px);
   gap: 18px;
+  min-height: 0;
 }
 
 .workspace-sidebar,
@@ -165,6 +191,23 @@ textarea {
 .workspace-right,
 .sidebar-stack {
   min-height: 0;
+}
+
+.workspace-main-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-height: 0;
+  height: 100%;
+}
+
+.workspace-bottom-panel {
+  min-height: 220px;
+  max-height: 42vh;
+}
+
+.workspace-bottom-panel .panel {
+  height: 100%;
 }
 
 .sidebar-stack,
@@ -214,6 +257,7 @@ textarea {
   flex: 1;
   min-height: 0;
   padding: 16px 20px 20px;
+  overflow: auto;
 }
 
 .transfer-panel {
@@ -358,6 +402,10 @@ textarea {
   padding: 14px 16px;
 }
 
+.workspace-right {
+  overflow: hidden;
+}
+
 .file-panel__meta-actions {
   display: flex;
   justify-content: flex-end;
@@ -413,6 +461,7 @@ textarea {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+  justify-content: flex-end;
 }
 
 .file-row__download:disabled,
@@ -647,10 +696,30 @@ textarea {
 
 .file-row__meta {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
+  flex-wrap: wrap;
   align-items: flex-end;
-  gap: 6px;
+  justify-content: flex-end;
+  gap: 10px 14px;
   color: var(--muted);
+  min-width: 320px;
+}
+
+.file-row {
+  align-items: center;
+  padding: 12px 14px;
+}
+
+.file-row__info {
+  min-width: 0;
+  flex: 1;
+}
+
+.file-row__info strong,
+.file-row__info p {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .error-banner {
@@ -670,6 +739,10 @@ textarea {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     align-items: start;
+  }
+
+  .workspace-bottom-panel {
+    max-height: 36vh;
   }
 }
 
