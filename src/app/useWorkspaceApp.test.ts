@@ -39,4 +39,29 @@ describe("mergeSnapshotSessions", () => {
     expect(merged[0].lastOutput).toBe("ready\r\nls\r\napp.log");
     expect(merged[0].updatedAt).toBe("6");
   });
+
+  it("accepts the snapshot when session lifecycle changed during reconnect", () => {
+    const currentSessions = [
+      session({
+        status: "disconnected",
+        currentPath: "/home/demo",
+        lastOutput: "old prompt\r\n\r\n[TermoraX] SSH 连接已断开。",
+        updatedAt: "8",
+      }),
+    ];
+    const snapshotSessions = [
+      session({
+        status: "connected",
+        currentPath: "/",
+        lastOutput: "已重新连接到 demo@example:22\r\n\r\n[TermoraX] 真实 SSH 终端已恢复。",
+        updatedAt: "7",
+      }),
+    ];
+
+    const merged = mergeSnapshotSessions(currentSessions, snapshotSessions);
+
+    expect(merged[0].status).toBe("connected");
+    expect(merged[0].currentPath).toBe("/");
+    expect(merged[0].lastOutput).toContain("真实 SSH 终端已恢复");
+  });
 });

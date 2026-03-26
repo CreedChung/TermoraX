@@ -325,10 +325,10 @@ export function FilePanel(props: FilePanelProps) {
               <div className="file-table">
                 <header className="file-table__header" onWheel={forwardWheelToActiveList}>
                   <span>{t("files.name")}</span>
-                  <span>{t("files.size")}</span>
-                  <span>{t("files.type")}</span>
-                  <span>{t("files.modifiedAt")}</span>
-                  <span>{t("files.actions")}</span>
+                  <span className="file-table__header-meta">{t("files.size")}</span>
+                  <span className="file-table__header-meta">{t("files.type")}</span>
+                  <span className="file-table__header-meta">{t("files.modifiedAt")}</span>
+                  <span className="file-table__header-meta">{t("files.actions")}</span>
                 </header>
                 <div className="file-table__body" ref={fileTableBodyRef}>
                 {entries.map((entry) => {
@@ -354,7 +354,6 @@ export function FilePanel(props: FilePanelProps) {
                         </span>
                         <div className="file-table__name-copy">
                           <strong>{entry.name}</strong>
-                          <p>{entry.path}</p>
                           <span className="file-table__name-meta">
                             {entry.createdAt ? `${t("files.createdAt")} ${formatTimestamp(entry.createdAt)}` : null}
                             {entry.createdAt ? " · " : ""}
@@ -364,9 +363,9 @@ export function FilePanel(props: FilePanelProps) {
                           </span>
                         </div>
                       </div>
-                      <span className="file-table__cell">{sizeLabel}</span>
-                      <span className="file-table__cell">{typeLabel}</span>
-                      <span className="file-table__cell">{formatTimestamp(entry.modifiedAt)}</span>
+                      <span className="file-table__cell file-table__cell--meta">{sizeLabel}</span>
+                      <span className="file-table__cell file-table__cell--meta">{typeLabel}</span>
+                      <span className="file-table__cell file-table__cell--meta">{formatTimestamp(entry.modifiedAt)}</span>
                       <div className="file-table__cell file-table__cell--actions">
                         {entry.kind === "file" && onDownload ? (
                           <button
@@ -399,7 +398,7 @@ export function FilePanel(props: FilePanelProps) {
                         {onDelete ? (
                           <button
                             type="button"
-                            className="ghost-button file-item__action-button"
+                            className="ghost-button file-item__action-button file-item__action-button--danger"
                             onClick={(event) => {
                               event.stopPropagation();
                               onDelete(entry);

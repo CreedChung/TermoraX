@@ -686,7 +686,7 @@ textarea {
   display: grid;
   grid-template-columns: minmax(280px, 3.2fr) minmax(84px, 0.9fr) minmax(72px, 0.8fr) minmax(132px, 1fr) minmax(170px, 1.2fr);
   gap: 10px;
-  align-items: start;
+  align-items: center;
 }
 
 .file-table__header {
@@ -694,6 +694,10 @@ textarea {
   border-bottom: 1px solid var(--border);
   color: var(--muted);
   font-size: 12px;
+}
+
+.file-table__header-meta {
+  text-align: center;
 }
 
 .file-table__body {
@@ -725,7 +729,7 @@ textarea {
 
 .file-table__cell--name {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 10px;
 }
 
@@ -738,22 +742,16 @@ textarea {
   min-width: 0;
 }
 
-.file-table__name-copy strong,
-.file-table__name-copy p {
+.file-table__name-copy strong {
   display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.file-table__name-copy p {
-  margin: 4px 0 0;
-  color: var(--muted);
-}
-
 .file-table__name-meta {
   display: block;
-  margin-top: 6px;
+  margin-top: 4px;
   color: var(--muted);
   font-size: 12px;
   line-height: 1.4;
@@ -761,9 +759,14 @@ textarea {
   word-break: break-word;
 }
 
+.file-table__cell--meta {
+  text-align: center;
+}
+
 .file-table__cell--actions {
   display: flex;
-  justify-content: flex-end;
+  justify-content: center;
+  align-items: center;
   gap: 6px;
   flex-wrap: wrap;
 }
@@ -774,6 +777,12 @@ textarea {
   padding: 4px 12px;
   font-size: 12px;
   background: transparent;
+}
+
+.file-item__action-button--danger {
+  border-color: rgba(255, 141, 125, 0.28);
+  background: rgba(255, 141, 125, 0.12);
+  color: var(--danger);
 }
 
 .file-item__action-button:disabled,

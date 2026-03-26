@@ -114,8 +114,10 @@ export function mergeSnapshotSessions(currentSessions: SessionTab[], snapshotSes
       currentSession.lastOutput.startsWith(snapshotSession.lastOutput);
     const currentIsNewer =
       parseSessionTimestamp(currentSession.updatedAt) > parseSessionTimestamp(snapshotSession.updatedAt);
+    const snapshotChangedLifecycle =
+      currentSession.status !== snapshotSession.status || currentSession.currentPath !== snapshotSession.currentPath;
 
-    if (!currentExtendsSnapshot && !currentIsNewer) {
+    if (snapshotChangedLifecycle || (!currentExtendsSnapshot && !currentIsNewer)) {
       return snapshotSession;
     }
 
