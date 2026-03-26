@@ -370,19 +370,21 @@ export function TerminalHost({
     if (output.length < previous.length || !output.startsWith(previous)) {
       terminal.reset();
       if (normalizedFull) {
-        terminal.write(normalizedFull);
+        terminal.write(normalizedFull, () => {
+          fitAddonRef.current?.fit();
+        });
       }
     } else {
       const delta = output.slice(previous.length);
       const normalizedDelta = delta.replace(/\r?\n/g, "\r\n");
       if (normalizedDelta) {
-        terminal.write(normalizedDelta);
+        terminal.write(normalizedDelta, () => {
+          fitAddonRef.current?.fit();
+        });
       }
     }
 
-    terminal.scrollToBottom();
     lastOutputRef.current = output;
-    fitAddonRef.current?.fit();
   }, [output]);
 
   return <div className="terminal-host__surface" ref={containerRef} data-testid="terminal-host" />;

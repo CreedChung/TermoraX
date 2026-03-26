@@ -193,12 +193,14 @@ impl AppState {
                 sessions::DEFAULT_TERMINAL_ROWS,
             ),
         )?;
-        let session_id = {
+        let (session_id, reader_generation) = {
             let mut store = self.store.lock()?;
-            store.open_live_session(&connection, opened.connection, opened.writer)?
+            let session_id = store.open_live_session(&connection, opened.connection, opened.writer)?;
+            let reader_generation = store.current_reader_generation(&session_id)?;
+            (session_id, reader_generation)
         };
 
-        self.spawn_session_reader(app_handle.clone(), session_id, opened.reader);
+        self.spawn_session_reader(app_handle.clone(), session_id, reader_generation, opened.reader);
         self.snapshot()
     }
 
@@ -254,12 +256,18 @@ impl AppState {
             cols,
             rows,
         ))?;
-        {
+        let reader_generation = {
             let mut store = self.store.lock()?;
             store.reconnect_live_session(session_id, &connection, opened.connection, opened.writer)?;
-        }
+            store.current_reader_generation(session_id)?
+        };
 
-        self.spawn_session_reader(app_handle.clone(), session_id.to_string(), opened.reader);
+        self.spawn_session_reader(
+            app_handle.clone(),
+            session_id.to_string(),
+            reader_generation,
+            opened.reader,
+        );
         self.snapshot()
     }
 
@@ -511,13 +519,24 @@ impl AppState {
         Ok(store.snapshot())
     }
 
-    fn spawn_session_reader(&self, app_handle: AppHandle, session_id: String, mut reader: ChannelReadHalf) {
+    fn spawn_session_reader(
+        &self,
+        app_handle: AppHandle,
+        session_id: String,
+        reader_generation: u64,
+        mut reader: ChannelReadHalf,
+    ) {
         let store = Arc::clone(&self.store);
 
         tauri::async_runtime::spawn(async move {
             while let Some(message) = reader.wait().await {
                 let payload = match store.lock() {
-                    Ok(mut guard) => guard.apply_terminal_event(&session_id, message),
+                    Ok(mut guard) => {
+                        if !guard.is_reader_generation_current(&session_id, reader_generation) {
+                            return;
+                        }
+                        guard.apply_terminal_event(&session_id, message)
+                    }
                     Err(_) => None,
                 };
 
@@ -527,9 +546,12 @@ impl AppState {
             }
 
             if let Ok(mut guard) = store.lock() {
-                if let Some(payload) = guard.mark_session_disconnected(&session_id, "\r\n[TermoraX] SSH 连接已断开。")
-                {
-                    emit_session_event(&app_handle, payload);
+                if guard.is_reader_generation_current(&session_id, reader_generation) {
+                    if let Some(payload) =
+                        guard.mark_session_disconnected(&session_id, "\r\n[TermoraX] SSH 连接已断开。")
+                    {
+                        emit_session_event(&app_handle, payload);
+                    }
                 }
             }
         });
@@ -543,6 +565,8 @@ struct AppStore {
     activity: Vec<ActivityEntry>,
     transfers: Vec<TransferTask>,
     runtimes: HashMap<String, LiveSessionRuntime>,
+    reader_generations: HashMap<String, u64>,
+    next_reader_generation: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -577,6 +601,8 @@ impl AppStore {
             }],
             transfers: Vec::new(),
             runtimes: HashMap::new(),
+            reader_generations: HashMap::new(),
+            next_reader_generation: 1,
         })
     }
 
@@ -656,8 +682,18 @@ impl AppStore {
     }
 
     fn delete_connection_profile(&mut self, connection_id: &str) -> AppResult<()> {
+        let removed_session_ids = self
+            .sessions
+            .iter()
+            .filter(|item| item.connection_id == connection_id)
+            .map(|item| item.id.clone())
+            .collect::<Vec<_>>();
         self.persisted.connections.retain(|item| item.id != connection_id);
         self.sessions.retain(|item| item.connection_id != connection_id);
+        for session_id in removed_session_ids {
+            self.runtimes.remove(&session_id);
+            self.reader_generations.remove(&session_id);
+        }
         self.record_activity(format!("已删除连接配置 {}。", connection_id));
         self.persist()
     }
@@ -733,7 +769,7 @@ impl AppStore {
         let session = sessions::open_connected_session(
             connection,
             format!(
-                "已连接到 {}@{}:{}\r\n\r\n[TermoraX] 真实 SSH 传输已建立。",
+                "已连接到 {}@{}:{}\r\n\r\n",
                 connection.username, connection.host, connection.port
             ),
             sessions::DEFAULT_TERMINAL_COLS,
@@ -747,6 +783,7 @@ impl AppStore {
                 writer,
             },
         );
+        self.bump_reader_generation(&session_id);
         self.sessions.insert(0, session);
         self.record_activity(format!("已为 {} 打开会话。", connection.name));
         self.persist()?;
@@ -757,6 +794,7 @@ impl AppStore {
     fn close_session(&mut self, session_id: &str) -> AppResult<Option<LiveSessionRuntime>> {
         let session_title = sessions::close_session(&mut self.sessions, session_id)?;
         let runtime = self.runtimes.remove(session_id);
+        self.reader_generations.remove(session_id);
         self.record_activity(format!("已关闭会话 {}。", session_title));
         self.persist()?;
 
@@ -793,6 +831,7 @@ impl AppStore {
                 writer,
             },
         );
+        self.bump_reader_generation(session_id);
         self.record_activity(format!("已重新连接会话 {}。", session_title));
         self.persist()
     }
@@ -818,6 +857,25 @@ impl AppStore {
         Ok(())
     }
 
+    fn bump_reader_generation(&mut self, session_id: &str) -> u64 {
+        let generation = self.next_reader_generation;
+        self.next_reader_generation = self.next_reader_generation.saturating_add(1);
+        self.reader_generations
+            .insert(session_id.to_string(), generation);
+        generation
+    }
+
+    fn current_reader_generation(&self, session_id: &str) -> AppResult<u64> {
+        self.reader_generations
+            .get(session_id)
+            .copied()
+            .ok_or_else(|| AppError::new("session_not_found", session_id.to_string()))
+    }
+
+    fn is_reader_generation_current(&self, session_id: &str, generation: u64) -> bool {
+        self.reader_generations.get(session_id).copied() == Some(generation)
+    }
+
     fn clear_session_output(&mut self, session_id: &str) -> AppResult<()> {
         let session_title = sessions::clear_session_output(&mut self.sessions, session_id)?;
         self.record_activity(format!("已清空会话 {} 的输出。", session_title));
@@ -837,6 +895,7 @@ impl AppStore {
             if let Some(runtime) = self.runtimes.remove(&removed_id) {
                 runtimes.push(runtime);
             }
+            self.reader_generations.remove(&removed_id);
         }
 
         self.record_activity(format!("已关闭 {} 个其它会话。", removed));
