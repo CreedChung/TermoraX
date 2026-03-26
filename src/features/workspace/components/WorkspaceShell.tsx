@@ -60,6 +60,8 @@ export function WorkspaceShell({ controller }: WorkspaceShellProps) {
                 currentPath={activeSession?.currentPath ?? null}
                 entries={state.remoteEntries}
                 loading={state.remoteEntriesLoading}
+                onOpenDirectory={controller.openRemoteDirectory}
+                onGoParent={controller.goRemoteParent}
               />
             ) : null}
             {state.settings.workspace.rightPanel === "snippets" ? <SnippetPanel controller={controller} /> : null}

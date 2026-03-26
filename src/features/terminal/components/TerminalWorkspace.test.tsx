@@ -110,7 +110,7 @@ function buildState(session: SessionTab | null): WorkspaceViewState {
 
 function createController(session: SessionTab | null = sampleSession, overrides?: Partial<WorkspaceController>) {
   const state = buildState(session);
-  const controller: Partial<WorkspaceController> = {
+  const controller: WorkspaceController = {
     state,
     activeSession: session,
     clearConnectionFeedback: vi.fn(),
@@ -128,6 +128,8 @@ function createController(session: SessionTab | null = sampleSession, overrides?
     clearSessionOutput: vi.fn(),
     resizeSession: vi.fn(),
     sendSessionInput: vi.fn(),
+    openRemoteDirectory: vi.fn(),
+    goRemoteParent: vi.fn(),
     saveSnippet: vi.fn(),
     deleteSnippet: vi.fn(),
     runSnippetOnActiveSession: vi.fn(),

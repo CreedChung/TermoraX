@@ -73,6 +73,8 @@ function deriveNextSelection(snapshot: BootstrapState, currentConnectionId: stri
 
 export function useWorkspaceApp() {
   const [state, setState] = useState<WorkspaceState>(initialState);
+  const activeSessionCurrentPath =
+    state.sessions.find((item) => item.id === state.activeSessionId)?.currentPath ?? null;
 
   function setConnectionFeedback(input: {
     errors?: ConnectionValidationErrors;
@@ -176,7 +178,7 @@ export function useWorkspaceApp() {
       cancelled = true;
       setState((current) => ({ ...current, remoteEntriesLoading: false }));
     };
-  }, [state.activeSessionId]);
+  }, [state.activeSessionId, activeSessionCurrentPath]);
 
   useEffect(() => {
     let cancelled = false;
@@ -357,6 +359,18 @@ export function useWorkspaceApp() {
         return;
       }
       await runMutation(() => desktopClient.sendSessionInput(sessionId, input));
+    },
+    async openRemoteDirectory(path: string) {
+      if (!state.activeSessionId) {
+        return;
+      }
+      await runMutation(() => desktopClient.navigateRemoteDirectory(state.activeSessionId as string, path));
+    },
+    async goRemoteParent() {
+      if (!state.activeSessionId) {
+        return;
+      }
+      await runMutation(() => desktopClient.navigateRemoteToParent(state.activeSessionId as string));
     },
     async saveSnippet(input: Partial<CommandSnippet>) {
       const snippet: CommandSnippet = {

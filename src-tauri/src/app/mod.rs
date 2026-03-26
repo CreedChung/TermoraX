@@ -36,7 +36,9 @@ pub fn run() {
             commands::resize_session,
             commands::send_session_input,
             commands::run_snippet_on_session,
-            commands::list_remote_entries
+            commands::list_remote_entries,
+            commands::navigate_remote_directory,
+            commands::navigate_remote_to_parent
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

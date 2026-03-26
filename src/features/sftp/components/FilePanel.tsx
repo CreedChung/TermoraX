@@ -8,6 +8,8 @@ interface FilePanelProps {
   entries: RemoteFileEntry[];
   currentPath: string | null;
   loading?: boolean;
+  onOpenDirectory?: (path: string) => void;
+  onGoParent?: () => void;
 }
 
 function formatFileSize(value: number): string {
@@ -28,7 +30,13 @@ function formatFileSize(value: number): string {
   return `${size.toFixed(1)} ${units[unitIndex]}`;
 }
 
-export function FilePanel({ entries, currentPath, loading = false }: FilePanelProps) {
+export function FilePanel({
+  entries,
+  currentPath,
+  loading = false,
+  onOpenDirectory,
+  onGoParent,
+}: FilePanelProps) {
   const statusMessage = useMemo(() => (loading ? t("files.loading") : t("files.empty")), [loading]);
   const pathLabel = t("files.currentPathLabel");
   const pathDisplay = currentPath ?? t("files.noSession");
@@ -46,6 +54,17 @@ export function FilePanel({ entries, currentPath, loading = false }: FilePanelPr
           <strong>{pathDisplay}</strong>
         </p>
         <p className="file-panel__meta-count">{summaryLabel}</p>
+        <div className="file-panel__meta-actions">
+          <button
+            type="button"
+            className="file-panel__parent-button"
+            onClick={onGoParent}
+            disabled={!currentPath || loading || !onGoParent}
+            aria-disabled={!currentPath || loading || !onGoParent}
+          >
+            {t("files.goParent")}
+          </button>
+        </div>
       </section>
 
       {loading ? (
@@ -64,21 +83,41 @@ export function FilePanel({ entries, currentPath, loading = false }: FilePanelPr
             <span>{t("files.size")}</span>
             <span>{t("files.modifiedAt")}</span>
           </header>
-          {entries.map((entry) => (
-            <article className="file-row" key={entry.path}>
-              <div className="file-row__info">
-                <strong>{entry.name}</strong>
-                <p>{entry.path}</p>
-              </div>
-              <div className="file-row__meta">
-                <span>{entry.kind === "file" ? t("files.file") : t("files.folder")}</span>
-                <span>
-                  {entry.kind === "file" ? formatFileSize(entry.size) : t("files.folderSizeUnknown")}
-                </span>
-                <span>{formatTimestamp(entry.modifiedAt)}</span>
-              </div>
-            </article>
-          ))}
+          {entries.map((entry) => {
+            const isDirectory = entry.kind === "directory";
+            return (
+              <article className="file-row" key={entry.path}>
+                {isDirectory ? (
+                  <button
+                    type="button"
+                    className="file-row__info file-row__info-button"
+                    onClick={() => {
+                      if (!loading && onOpenDirectory) {
+                        onOpenDirectory(entry.path);
+                      }
+                    }}
+                    disabled={loading || !onOpenDirectory}
+                    aria-disabled={loading || !onOpenDirectory}
+                  >
+                    <strong>{entry.name}</strong>
+                    <p>{entry.path}</p>
+                  </button>
+                ) : (
+                  <div className="file-row__info">
+                    <strong>{entry.name}</strong>
+                    <p>{entry.path}</p>
+                  </div>
+                )}
+                <div className="file-row__meta">
+                  <span>{entry.kind === "file" ? t("files.file") : t("files.folder")}</span>
+                  <span>
+                    {entry.kind === "file" ? formatFileSize(entry.size) : t("files.folderSizeUnknown")}
+                  </span>
+                  <span>{formatTimestamp(entry.modifiedAt)}</span>
+                </div>
+              </article>
+            );
+          })}
         </div>
       )}
     </Panel>

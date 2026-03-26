@@ -284,6 +284,39 @@ textarea {
   padding: 14px 16px;
 }
 
+.file-panel__meta-actions {
+  display: flex;
+  justify-content: flex-end;
+  width: 100%;
+}
+
+.file-panel__parent-button {
+  padding: 6px 12px;
+  border-radius: 12px;
+  font-size: 13px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+}
+
+.file-row__info-button {
+  width: 100%;
+  border: none;
+  background: none;
+  margin: 0;
+  padding: 0;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  display: block;
+}
+
+.file-row__info-button:disabled,
+.file-row__info-button[aria-disabled="true"] {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .connection-card {
   text-align: left;
 }

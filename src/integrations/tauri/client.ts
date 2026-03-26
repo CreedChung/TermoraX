@@ -97,6 +97,95 @@ function recordActivity(title: string) {
   };
 }
 
+function mockRemoteEntriesForPath(path: string): RemoteFileEntry[] {
+  const now = new Date().toISOString();
+
+  if (path === "/") {
+    return [
+      {
+        name: "home",
+        path: "/home",
+        kind: "directory",
+        size: 0,
+        modifiedAt: now,
+      },
+      {
+        name: "var",
+        path: "/var",
+        kind: "directory",
+        size: 0,
+        modifiedAt: now,
+      },
+      {
+        name: "etc",
+        path: "/etc",
+        kind: "directory",
+        size: 0,
+        modifiedAt: now,
+      },
+    ];
+  }
+
+  if (path === "/home") {
+    return [
+      {
+        name: "demo",
+        path: "/home/demo",
+        kind: "directory",
+        size: 0,
+        modifiedAt: now,
+      },
+      {
+        name: "ops",
+        path: "/home/ops",
+        kind: "directory",
+        size: 0,
+        modifiedAt: now,
+      },
+    ];
+  }
+
+  return [
+    {
+      name: "deploy",
+      path: `${path}/deploy`,
+      kind: "directory",
+      size: 0,
+      modifiedAt: now,
+    },
+    {
+      name: "logs",
+      path: `${path}/logs`,
+      kind: "directory",
+      size: 0,
+      modifiedAt: now,
+    },
+    {
+      name: "README.md",
+      path: `${path}/README.md`,
+      kind: "file",
+      size: 1480,
+      modifiedAt: now,
+    },
+  ];
+}
+
+function parentRemotePath(path: string): string {
+  const trimmed = path.trim();
+  if (!trimmed || trimmed === "/") {
+    return "/";
+  }
+
+  const normalized = trimmed.replace(/\/+$/, "");
+  const lastSlashIndex = normalized.lastIndexOf("/");
+
+  if (lastSlashIndex <= 0) {
+    return "/";
+  }
+
+  return normalized.slice(0, lastSlashIndex);
+}
+
 function createMockSession(connectionId: string): BootstrapState {
   const connection = mockState.connections.find((item) => item.id === connectionId);
 
@@ -400,31 +489,34 @@ async function callOrMock<T>(command: string, args?: Record<string, unknown>): P
     case "list_remote_entries": {
       const sessionId = args?.sessionId as string;
       const session = mockState.sessions.find((item) => item.id === sessionId);
-      const cwd = session?.currentPath ?? "/home/demo";
-      const entries: RemoteFileEntry[] = [
-        {
-          name: "deploy",
-          path: `${cwd}/deploy`,
-          kind: "directory",
-          size: 0,
-          modifiedAt: new Date().toISOString(),
-        },
-        {
-          name: "logs",
-          path: `${cwd}/logs`,
-          kind: "directory",
-          size: 0,
-          modifiedAt: new Date().toISOString(),
-        },
-        {
-          name: "README.md",
-          path: `${cwd}/README.md`,
-          kind: "file",
-          size: 1480,
-          modifiedAt: new Date().toISOString(),
-        },
-      ];
-      return entries as T;
+      return mockRemoteEntriesForPath(session?.currentPath ?? "/home/demo") as T;
+    }
+    case "navigate_remote_directory": {
+      const sessionId = args?.sessionId as string;
+      const path = String(args?.path ?? "").trim();
+      if (!path) {
+        throw new Error(t("errors.remoteEntries"));
+      }
+      mockState = {
+        ...mockState,
+        sessions: mockState.sessions.map((item) =>
+          item.id === sessionId
+            ? {
+                ...item,
+                currentPath: path,
+                updatedAt: new Date().toISOString(),
+              }
+            : item,
+        ),
+      };
+      recordActivity(`已切换远程目录到 ${path}`);
+      return cloneState() as T;
+    }
+    case "navigate_remote_to_parent": {
+      const sessionId = args?.sessionId as string;
+      const session = mockState.sessions.find((item) => item.id === sessionId);
+      const nextPath = parentRemotePath(session?.currentPath ?? "/");
+      return callOrMock<T>("navigate_remote_directory", { sessionId, path: nextPath });
     }
     default:
       throw new Error(`Unsupported mock command: ${command}`);
@@ -488,6 +580,12 @@ export const desktopClient = {
   },
   listRemoteEntries(sessionId: string) {
     return callOrMock<RemoteFileEntry[]>("list_remote_entries", { sessionId });
+  },
+  navigateRemoteDirectory(sessionId: string, path: string) {
+    return callOrMock<BootstrapState>("navigate_remote_directory", { sessionId, path });
+  },
+  navigateRemoteToParent(sessionId: string) {
+    return callOrMock<BootstrapState>("navigate_remote_to_parent", { sessionId });
   },
   subscribeSessionEvents(listener: (event: SessionEvent) => void) {
     if (!isTauriRuntime()) {

@@ -165,3 +165,22 @@ pub fn list_remote_entries(
 ) -> AppResult<Vec<RemoteFileEntry>> {
     state.list_remote_entries(&session_id)
 }
+
+/// Navigates a live session to a specific remote directory path.
+#[tauri::command]
+pub fn navigate_remote_directory(
+    state: State<'_, AppState>,
+    session_id: String,
+    path: String,
+) -> AppResult<BootstrapState> {
+    state.navigate_remote_directory(&session_id, &path)
+}
+
+/// Navigates a live session to the parent remote directory.
+#[tauri::command]
+pub fn navigate_remote_to_parent(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> AppResult<BootstrapState> {
+    state.navigate_remote_to_parent(&session_id)
+}

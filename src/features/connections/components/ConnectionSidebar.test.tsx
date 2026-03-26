@@ -55,7 +55,7 @@ const sampleConnections: ConnectionProfile[] = [
 ];
 
 function createController(overrides?: Partial<WorkspaceController>): WorkspaceController {
-  return {
+  const controller: WorkspaceController = {
     state: {
       connections: sampleConnections,
       sessions: [],
@@ -91,6 +91,8 @@ function createController(overrides?: Partial<WorkspaceController>): WorkspaceCo
     clearSessionOutput: async () => undefined,
     resizeSession: async () => undefined,
     sendSessionInput: async () => undefined,
+    openRemoteDirectory: async () => undefined,
+    goRemoteParent: async () => undefined,
     saveSnippet: async () => undefined,
     deleteSnippet: async () => undefined,
     runSnippetOnActiveSession: async () => undefined,
@@ -99,8 +101,9 @@ function createController(overrides?: Partial<WorkspaceController>): WorkspaceCo
     toggleRightPanel: async () => undefined,
     toggleTheme: async () => undefined,
     resetSettings: async () => undefined,
-    ...overrides,
   };
+
+  return { ...controller, ...overrides };
 }
 
 describe("ConnectionSidebar", () => {

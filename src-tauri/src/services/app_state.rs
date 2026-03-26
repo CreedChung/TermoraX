@@ -246,6 +246,20 @@ impl AppState {
         store.list_remote_entries(session_id)
     }
 
+    /// Navigates the tracked remote working directory to the provided target path.
+    pub fn navigate_remote_directory(&self, session_id: &str, path: &str) -> AppResult<BootstrapState> {
+        let mut store = self.store.lock()?;
+        store.navigate_remote_directory(session_id, path)?;
+        Ok(store.snapshot())
+    }
+
+    /// Navigates the tracked remote working directory to the parent path.
+    pub fn navigate_remote_to_parent(&self, session_id: &str) -> AppResult<BootstrapState> {
+        let mut store = self.store.lock()?;
+        store.navigate_remote_to_parent(session_id)?;
+        Ok(store.snapshot())
+    }
+
     fn spawn_session_reader(&self, app_handle: AppHandle, session_id: String, mut reader: ChannelReadHalf) {
         let store = Arc::clone(&self.store);
 
@@ -582,6 +596,39 @@ impl AppStore {
         Ok(listing.entries)
     }
 
+    fn navigate_remote_directory(&mut self, session_id: &str, path: &str) -> AppResult<()> {
+        let runtime = self
+            .runtimes
+            .get(session_id)
+            .ok_or_else(|| AppError::new("session_not_connected", "当前会话尚未建立实时 SSH 连接"))?;
+        let listing =
+            tauri::async_runtime::block_on(sftp::default_sftp_service().list_directory(&runtime.connection, path))?;
+
+        let session = self
+            .sessions
+            .iter_mut()
+            .find(|item| item.id == session_id)
+            .ok_or_else(|| AppError::new("session_not_found", session_id.to_string()))?;
+        session.current_path = Some(listing.canonical_path.clone());
+        session.updated_at = now_iso();
+
+        Ok(())
+    }
+
+    fn navigate_remote_to_parent(&mut self, session_id: &str) -> AppResult<()> {
+        let current_path = self
+            .sessions
+            .iter()
+            .find(|item| item.id == session_id)
+            .ok_or_else(|| AppError::new("session_not_found", session_id.to_string()))?
+            .current_path
+            .clone()
+            .unwrap_or_else(|| "/".into());
+        let parent_path = parent_remote_path(&current_path);
+
+        self.navigate_remote_directory(session_id, &parent_path)
+    }
+
     fn find_connection(&self, connection_id: &str) -> AppResult<&ConnectionProfile> {
         self.persisted
             .connections
@@ -739,6 +786,19 @@ fn now_iso() -> String {
         .unwrap_or_else(|_| "0".into())
 }
 
+fn parent_remote_path(path: &str) -> String {
+    let trimmed = path.trim();
+    if trimmed.is_empty() || trimmed == "/" {
+        return "/".into();
+    }
+
+    let normalized = trimmed.trim_end_matches('/');
+    match normalized.rsplit_once('/') {
+        Some(("", _)) | None => "/".into(),
+        Some((parent, _)) => parent.to_string(),
+    }
+}
+
 fn emit_session_event(app_handle: &AppHandle, event: SessionUiEvent) {
     match event {
         SessionUiEvent::Output(payload) => {
@@ -754,7 +814,7 @@ fn emit_session_event(app_handle: &AppHandle, event: SessionUiEvent) {
 mod tests {
     use std::{env, fs, path::PathBuf};
 
-    use super::AppState;
+    use super::{AppState, parent_remote_path};
     use crate::models::ConnectionProfile;
 
     fn temp_config_dir(name: &str) -> PathBuf {
@@ -809,5 +869,14 @@ mod tests {
             .expect("validation should succeed");
 
         assert_eq!(result.normalized_profile.name, "测试主机");
+    }
+
+    #[test]
+    fn parent_remote_path_handles_root_and_nested_directories() {
+        assert_eq!(parent_remote_path("/"), "/");
+        assert_eq!(parent_remote_path(""), "/");
+        assert_eq!(parent_remote_path("/home"), "/");
+        assert_eq!(parent_remote_path("/home/demo"), "/home");
+        assert_eq!(parent_remote_path("/home/demo/"), "/home");
     }
 }

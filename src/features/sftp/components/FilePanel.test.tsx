@@ -1,5 +1,6 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import userEvent from "@testing-library/user-event";
+import { describe, expect, it, vi } from "vitest";
 import { FilePanel } from "./FilePanel";
 import type { RemoteFileEntry } from "../../../entities/domain";
 
@@ -44,5 +45,35 @@ describe("FilePanel", () => {
     expect(screen.getByText("README.md")).toBeInTheDocument();
     expect(screen.getByText("1.4 KB")).toBeInTheDocument();
     expect(screen.getByText("2 项")).toBeInTheDocument();
+  });
+
+  it("keeps parent action disabled when there is no current path or during loading", async () => {
+    const user = userEvent.setup();
+    const goParent = vi.fn();
+    render(<FilePanel entries={[]} currentPath={null} loading onGoParent={goParent} />);
+
+    const parentButton = screen.getByRole("button", { name: "返回上一级" });
+    expect(parentButton).toBeDisabled();
+    await user.click(parentButton);
+    expect(goParent).not.toHaveBeenCalled();
+  });
+
+  it("calls callbacks when navigation controls are active", async () => {
+    const user = userEvent.setup();
+    const goParent = vi.fn();
+    const openDirectory = vi.fn();
+    render(
+      <FilePanel
+        entries={[sampleDir, sampleFile]}
+        currentPath="/home/demo"
+        onGoParent={goParent}
+        onOpenDirectory={openDirectory}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "返回上一级" }));
+    expect(goParent).toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: /deploy/ }));
+    expect(openDirectory).toHaveBeenCalledWith("/home/demo/deploy");
   });
 });

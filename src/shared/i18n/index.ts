@@ -114,6 +114,7 @@ const messages: Record<AppLocale, MessageSchema> = {
     "files.folder": "目录",
     "files.file": "文件",
     "files.folderSizeUnknown": "目录大小不可用",
+    "files.goParent": "返回上一级",
     "snippets.title": "片段",
     "snippets.subtitle": "{count} 个复用命令",
     "snippets.edit": "编辑",
