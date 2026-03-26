@@ -9,6 +9,7 @@ import { readClipboardText, writeClipboardText } from "../../../shared/lib/clipb
 
 const terminalOnDataHandlers: Array<(data: string) => void> = [];
 const terminalKeyHandlers: Array<(event: KeyboardEvent) => boolean> = [];
+const createdTerminals: Array<{ dispose: ReturnType<typeof vi.fn> }> = [];
 let terminalSelection = "selected-output";
 vi.mock("../../../shared/lib/clipboard", () => ({
   writeClipboardText: vi.fn<(text: string) => Promise<boolean>>().mockResolvedValue(true),
@@ -23,6 +24,7 @@ vi.mock("@xterm/addon-fit", () => ({
 
 vi.mock("@xterm/xterm", () => ({
   Terminal: class MockTerminal {
+    dispose = vi.fn();
     cols = 120;
     rows = 40;
     options = {
@@ -57,7 +59,9 @@ vi.mock("@xterm/xterm", () => ({
     scrollLines() {}
     scrollToTop() {}
     scrollToBottom() {}
-    dispose() {}
+    constructor() {
+      createdTerminals.push(this);
+    }
   },
 }));
 
@@ -65,8 +69,9 @@ afterEach(() => {
   vi.clearAllMocks();
   terminalOnDataHandlers.length = 0;
   terminalKeyHandlers.length = 0;
+  createdTerminals.length = 0;
   terminalSelection = "selected-output";
-  vi.mocked(readClipboardText).mockResolvedValue("pasted-command");
+  (readClipboardText as ReturnType<typeof vi.fn>).mockResolvedValue("pasted-command");
 });
 
 const sampleSession: SessionTab = {
@@ -185,6 +190,7 @@ describe("TerminalWorkspace", () => {
     expect(clearSessionOutput).toHaveBeenCalledWith(sampleSession.id);
     expect(closeOtherSessions).toHaveBeenCalledWith(sampleSession.id);
     expect(screen.getByText("终端尺寸：120 × 40")).toBeInTheDocument();
+    expect(screen.getByText("/home/termorax")).toBeInTheDocument();
     expect(screen.getByTestId("terminal-host")).toBeInTheDocument();
   });
 
@@ -268,6 +274,43 @@ describe("TerminalWorkspace", () => {
     expect(updateTheme).toHaveBeenCalledWith("sand");
     expect(toggleBottomPanel).toHaveBeenCalledTimes(1);
     expect(toggleSidePanel).toHaveBeenCalledTimes(1);
+  });
+
+  test("keeps terminal output instance alive when the theme changes", () => {
+    const controller = createController(sampleSession);
+    const { rerender } = render(<TerminalWorkspace controller={controller} />);
+
+    expect(createdTerminals).toHaveLength(1);
+
+    const nextController = createController(sampleSession, {
+      state: {
+        ...controller.state,
+        settings: {
+          ...controller.state.settings,
+          terminal: {
+            ...controller.state.settings.terminal,
+            theme: "sand",
+          },
+        },
+      },
+    });
+
+    rerender(<TerminalWorkspace controller={nextController} />);
+
+    expect(createdTerminals).toHaveLength(1);
+    expect(createdTerminals[0]?.dispose).not.toHaveBeenCalled();
+  });
+
+  test("prefers the shell prompt path over the fallback session path", () => {
+    const controller = createController({
+      ...sampleSession,
+      currentPath: "/",
+      lastOutput: "Last login...\r\nroot@example:/var/www/app# ",
+    });
+
+    render(<TerminalWorkspace controller={controller} />);
+
+    expect(screen.getByText("/var/www/app")).toBeInTheDocument();
   });
 
   test("supports terminal shortcuts for clear and clipboard actions", async () => {

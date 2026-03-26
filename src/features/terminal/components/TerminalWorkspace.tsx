@@ -26,6 +26,10 @@ export function TerminalWorkspace({ controller }: TerminalWorkspaceProps) {
   const hasOtherSessions = state.sessions.length > 1;
   const hostActionsRef = useRef<TerminalHostActions | null>(null);
   const themeOptions = listThemeDefinitions();
+  const displayPath = useMemo(
+    () => deriveDisplayedTerminalPath(activeSession?.lastOutput ?? "", activeSession?.currentPath ?? null),
+    [activeSession?.currentPath, activeSession?.lastOutput],
+  );
   // Only surface terminal dimensions when both axes are available.
   const sessionSize = useMemo(() => {
     const cols = activeSession?.terminalCols;
@@ -116,7 +120,7 @@ export function TerminalWorkspace({ controller }: TerminalWorkspaceProps) {
           {activeSession ? (
             <>
               <div className="terminal-meta">
-                <span>{activeSession.currentPath}</span>
+                <span>{displayPath}</span>
                 <span>{t("terminal.lastUpdate", { time: formatTimestamp(activeSession.updatedAt) })}</span>
                 {sessionSize ? (
                   <span>{t("terminal.size", { cols: sessionSize.cols, rows: sessionSize.rows })}</span>
@@ -205,6 +209,55 @@ interface TerminalHostProps {
 }
 
 const INITIAL_VIEWPORT_LOCK_MS = 1200;
+
+function deriveDisplayedTerminalPath(output: string, fallbackPath: string | null): string {
+  const pathFromOsc = extractOsc7Path(output);
+  if (pathFromOsc) {
+    return pathFromOsc;
+  }
+
+  const strippedOutput = stripTerminalControlSequences(output);
+  const promptLines = strippedOutput
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .filter(Boolean);
+
+  for (let index = promptLines.length - 1; index >= 0; index -= 1) {
+    const match = promptLines[index]?.match(/[^@\s]+@[^:\s]+:(~(?:\/[^\s#$]*)?|\/[^\s#$]*)\s*[#$]\s*$/);
+    if (match?.[1]) {
+      return match[1];
+    }
+  }
+
+  return fallbackPath ?? "/";
+}
+
+function extractOsc7Path(output: string): string | null {
+  const osc7Pattern = /\u001b]7;file:\/\/[^/\u0007\u001b]*([^\u0007\u001b]*)(?:\u0007|\u001b\\)/g;
+  let match: RegExpExecArray | null = null;
+
+  for (const current of output.matchAll(osc7Pattern)) {
+    match = current;
+  }
+
+  const encodedPath = match?.[1];
+  if (!encodedPath) {
+    return null;
+  }
+
+  try {
+    return decodeURIComponent(encodedPath) || null;
+  } catch {
+    return encodedPath;
+  }
+}
+
+function stripTerminalControlSequences(value: string): string {
+  return value
+    .replace(/\u001b\][^\u0007]*(?:\u0007|\u001b\\)/g, "")
+    .replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "")
+    .replace(/\u001b[@-_]/g, "");
+}
 
 export function TerminalHost({
   sessionId,
@@ -362,7 +415,7 @@ export function TerminalHost({
       terminalRef.current = null;
       fitAddonRef.current = null;
     };
-  }, [cursorStyle, fontFamily, fontSize, lineHeight, terminalTheme]);
+  }, [sessionId]);
 
   useEffect(() => {
     const terminal = terminalRef.current;
@@ -371,6 +424,7 @@ export function TerminalHost({
     }
 
     terminal.options.theme = terminalTheme;
+    fitAddonRef.current?.fit();
   }, [terminalTheme]);
 
   useEffect(() => {
@@ -382,6 +436,7 @@ export function TerminalHost({
     terminal.options.fontSize = fontSize;
     terminal.options.lineHeight = lineHeight;
     terminal.options.cursorStyle = cursorStyle === "line" ? "bar" : "block";
+    fitAddonRef.current?.fit();
   }, [cursorStyle, fontFamily, fontSize, lineHeight]);
 
   useEffect(() => {
