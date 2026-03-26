@@ -30,7 +30,8 @@ import {
 } from "../shared/lib/connections";
 import { createId } from "../shared/lib/id";
 import { t } from "../shared/i18n";
-import { mergeSessionEvent } from "./sessionEvents";
+import { applySessionOutputEvents, applySessionSnapshotOutputs } from "./sessionOutputStore";
+import { mergeSessionEventMetadata } from "./sessionEvents";
 
 interface WorkspaceState extends BootstrapState {
   isLoading: boolean;
@@ -73,7 +74,6 @@ const initialState: WorkspaceState = {
 
 const SESSION_EVENT_FLUSH_DELAY_MS = 33;
 const REMOTE_PANEL_IDLE_REFRESH_DELAY_MS = 1200;
-const MAX_SESSION_OUTPUT_CHARS = 200_000;
 
 function deriveNextSelection(snapshot: BootstrapState, currentConnectionId: string | null, currentSessionId: string | null) {
   const selectedConnectionId =
@@ -93,10 +93,7 @@ function normalizeBootstrapState(snapshot: BootstrapState): BootstrapState {
     ...snapshot,
     sessions: snapshot.sessions.map((session) => ({
       ...session,
-      lastOutput:
-        session.lastOutput.length > MAX_SESSION_OUTPUT_CHARS
-          ? session.lastOutput.slice(-MAX_SESSION_OUTPUT_CHARS)
-          : session.lastOutput,
+      lastOutput: "",
     })),
     settings: normalizeAppSettings(snapshot.settings),
   };
@@ -119,33 +116,30 @@ function buildHostInspectionMessage(inspection: HostFingerprintInspection): stri
 }
 
 /**
- * Preserves newer real-time terminal output when a mutation snapshot arrives behind session events.
+ * Preserves newer real-time session metadata when a mutation snapshot arrives
+ * behind session events. Terminal transcripts are synchronized separately.
  */
 export function mergeSnapshotSessions(currentSessions: SessionTab[], snapshotSessions: SessionTab[]): SessionTab[] {
   const currentById = new Map(currentSessions.map((session) => [session.id, session]));
 
   return snapshotSessions.map((snapshotSession) => {
     const currentSession = currentById.get(snapshotSession.id);
-    if (!currentSession || currentSession.lastOutput === snapshotSession.lastOutput) {
+    if (!currentSession) {
       return snapshotSession;
     }
 
-    const currentExtendsSnapshot =
-      currentSession.lastOutput.length > snapshotSession.lastOutput.length &&
-      currentSession.lastOutput.startsWith(snapshotSession.lastOutput);
     const currentIsNewer =
       parseSessionTimestamp(currentSession.updatedAt) > parseSessionTimestamp(snapshotSession.updatedAt);
     const snapshotChangedLifecycle =
       currentSession.status !== snapshotSession.status || currentSession.currentPath !== snapshotSession.currentPath;
 
-    if (snapshotChangedLifecycle || (!currentExtendsSnapshot && !currentIsNewer)) {
+    if (snapshotChangedLifecycle || !currentIsNewer) {
       return snapshotSession;
     }
 
     return {
       ...snapshotSession,
-      lastOutput: currentSession.lastOutput,
-      updatedAt: currentIsNewer ? currentSession.updatedAt : snapshotSession.updatedAt,
+      updatedAt: currentSession.updatedAt,
     };
   });
 }
@@ -287,6 +281,8 @@ export function useWorkspaceApp() {
   }
 
   function applySnapshot(snapshot: BootstrapState) {
+    applySessionSnapshotOutputs(snapshot.sessions);
+
     startTransition(() => {
       setState((current) => {
         const normalizedSnapshot = normalizeBootstrapState(snapshot);
@@ -393,11 +389,13 @@ export function useWorkspaceApp() {
         return;
       }
 
+      applySessionOutputEvents(events);
+
       setState((current) => {
         let sessions = current.sessions;
 
         for (const event of events) {
-          sessions = mergeSessionEvent(sessions, event);
+          sessions = mergeSessionEventMetadata(sessions, event);
         }
 
         if (sessions === current.sessions) {

@@ -20,23 +20,21 @@ function session(overrides?: Partial<SessionTab>): SessionTab {
 }
 
 describe("mergeSnapshotSessions", () => {
-  it("preserves newer event-driven output when a stale snapshot arrives", () => {
-    const currentSessions = [session({ lastOutput: "ready\r\nls", updatedAt: "5" })];
-    const snapshotSessions = [session({ lastOutput: "ready", updatedAt: "4" })];
+  it("preserves newer metadata timestamps when a stale snapshot arrives", () => {
+    const currentSessions = [session({ updatedAt: "5" })];
+    const snapshotSessions = [session({ updatedAt: "4" })];
 
     const merged = mergeSnapshotSessions(currentSessions, snapshotSessions);
 
-    expect(merged[0].lastOutput).toBe("ready\r\nls");
     expect(merged[0].updatedAt).toBe("5");
   });
 
-  it("accepts the snapshot when it already contains the latest output", () => {
-    const currentSessions = [session({ lastOutput: "ready", updatedAt: "4" })];
-    const snapshotSessions = [session({ lastOutput: "ready\r\nls\r\napp.log", updatedAt: "6" })];
+  it("accepts the snapshot when it already contains the latest metadata", () => {
+    const currentSessions = [session({ updatedAt: "4" })];
+    const snapshotSessions = [session({ updatedAt: "6" })];
 
     const merged = mergeSnapshotSessions(currentSessions, snapshotSessions);
 
-    expect(merged[0].lastOutput).toBe("ready\r\nls\r\napp.log");
     expect(merged[0].updatedAt).toBe("6");
   });
 
@@ -62,7 +60,7 @@ describe("mergeSnapshotSessions", () => {
 
     expect(merged[0].status).toBe("connected");
     expect(merged[0].currentPath).toBe("/");
-    expect(merged[0].lastOutput).toContain("真实 SSH 终端已恢复");
+    expect(merged[0].updatedAt).toBe("7");
   });
 });
 

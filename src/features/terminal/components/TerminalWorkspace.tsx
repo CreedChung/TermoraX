@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, type MutableRefObject } from "react";
 import type { WorkspaceController } from "../../../app/useWorkspaceApp";
+import { getSessionOutputState, subscribeSessionOutput } from "../../../app/sessionOutputStore";
 import type { ThemeId } from "../../../entities/domain";
 import { getThemeDefinition, listThemeDefinitions } from "../../settings/model/themes";
 import { StatusBadge } from "../../../shared/components/StatusBadge";
@@ -26,10 +27,7 @@ export function TerminalWorkspace({ controller }: TerminalWorkspaceProps) {
   const hasOtherSessions = state.sessions.length > 1;
   const hostActionsRef = useRef<TerminalHostActions | null>(null);
   const themeOptions = listThemeDefinitions();
-  const displayPath = useMemo(
-    () => deriveDisplayedTerminalPath(activeSession?.lastOutput ?? "", activeSession?.currentPath ?? null),
-    [activeSession?.currentPath, activeSession?.lastOutput],
-  );
+  const displayPath = useMemo(() => activeSession?.currentPath ?? "/", [activeSession?.currentPath]);
   // Only surface terminal dimensions when both axes are available.
   const sessionSize = useMemo(() => {
     const cols = activeSession?.terminalCols;
@@ -171,7 +169,7 @@ export function TerminalWorkspace({ controller }: TerminalWorkspaceProps) {
                   sessionId={activeSession.id}
                   cursorStyle={state.settings.terminal.cursorStyle}
                   hostActionsRef={hostActionsRef}
-                  output={activeSession.lastOutput}
+                  initialOutput={activeSession.lastOutput}
                   onClearRequest={() => void controller.clearSessionOutput(activeSession.id)}
                   onInput={handleTerminalInput}
                   onResize={(cols, rows) => void controller.resizeSession(activeSession.id, cols, rows)}
@@ -196,7 +194,7 @@ export function TerminalWorkspace({ controller }: TerminalWorkspaceProps) {
 
 interface TerminalHostProps {
   sessionId: string;
-  output: string;
+  initialOutput: string;
   theme: ThemeId;
   fontFamily: string;
   fontSize: number;
@@ -209,62 +207,10 @@ interface TerminalHostProps {
 }
 
 const INITIAL_VIEWPORT_LOCK_MS = 1200;
-const MAX_PATH_SCAN_CHARS = 8192;
-
-function deriveDisplayedTerminalPath(output: string, fallbackPath: string | null): string {
-  const recentOutput =
-    output.length > MAX_PATH_SCAN_CHARS ? output.slice(-MAX_PATH_SCAN_CHARS) : output;
-  const pathFromOsc = extractOsc7Path(recentOutput);
-  if (pathFromOsc) {
-    return pathFromOsc;
-  }
-
-  const strippedOutput = stripTerminalControlSequences(recentOutput);
-  const promptLines = strippedOutput
-    .split(/\r?\n/)
-    .map((line) => line.trimEnd())
-    .filter(Boolean);
-
-  for (let index = promptLines.length - 1; index >= 0; index -= 1) {
-    const match = promptLines[index]?.match(/[^@\s]+@[^:\s]+:(~(?:\/[^\s#$]*)?|\/[^\s#$]*)\s*[#$]\s*$/);
-    if (match?.[1]) {
-      return match[1];
-    }
-  }
-
-  return fallbackPath ?? "/";
-}
-
-function extractOsc7Path(output: string): string | null {
-  const osc7Pattern = /\u001b]7;file:\/\/[^/\u0007\u001b]*([^\u0007\u001b]*)(?:\u0007|\u001b\\)/g;
-  let match: RegExpExecArray | null = null;
-
-  for (const current of output.matchAll(osc7Pattern)) {
-    match = current;
-  }
-
-  const encodedPath = match?.[1];
-  if (!encodedPath) {
-    return null;
-  }
-
-  try {
-    return decodeURIComponent(encodedPath) || null;
-  } catch {
-    return encodedPath;
-  }
-}
-
-function stripTerminalControlSequences(value: string): string {
-  return value
-    .replace(/\u001b\][^\u0007]*(?:\u0007|\u001b\\)/g, "")
-    .replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "")
-    .replace(/\u001b[@-_]/g, "");
-}
 
 export function TerminalHost({
   sessionId,
-  output,
+  initialOutput,
   theme,
   fontFamily,
   fontSize,
@@ -284,6 +230,7 @@ export function TerminalHost({
   const shouldScrollToTopRef = useRef(true);
   const initialViewportLockTimerRef = useRef<number | null>(null);
   const fitFrameRef = useRef<number | null>(null);
+  const outputVersionRef = useRef(-1);
   const inputHandlerRef = useRef(onInput);
   const resizeHandlerRef = useRef(onResize);
   const clearHandlerRef = useRef(onClearRequest);
@@ -327,6 +274,7 @@ export function TerminalHost({
   useEffect(() => {
     lastOutputRef.current = "";
     lastResizeRef.current = "";
+    outputVersionRef.current = -1;
     shouldScrollToTopRef.current = true;
     if (initialViewportLockTimerRef.current != null && typeof window !== "undefined") {
       window.clearTimeout(initialViewportLockTimerRef.current);
@@ -508,47 +456,57 @@ export function TerminalHost({
 
   useEffect(() => {
     const terminal = terminalRef.current;
-    if (!terminal || lastOutputRef.current === output) {
+    if (!terminal) {
       return;
     }
 
-    const previous = lastOutputRef.current;
-    const normalizedFull = output.replace(/\r?\n/g, "\r\n");
-    const didResetOutput = output.length < previous.length || !output.startsWith(previous);
-    if (didResetOutput) {
-      shouldScrollToTopRef.current = true;
-    }
-    const keepViewportAtTop = shouldScrollToTopRef.current;
-    const afterWrite = () => {
-      if (keepViewportAtTop) {
-        terminal.scrollToTop();
-        if (typeof window !== "undefined") {
-          if (initialViewportLockTimerRef.current != null) {
-            window.clearTimeout(initialViewportLockTimerRef.current);
-          }
-          initialViewportLockTimerRef.current = window.setTimeout(() => {
-            shouldScrollToTopRef.current = false;
-            initialViewportLockTimerRef.current = null;
-          }, INITIAL_VIEWPORT_LOCK_MS);
-        }
+    const applyOutputState = () => {
+      const currentTerminal = terminalRef.current;
+      if (!currentTerminal) {
+        return;
       }
+
+      const nextState = getSessionOutputState(sessionId, initialOutput);
+      if (nextState.version === outputVersionRef.current) {
+        return;
+      }
+
+      const keepViewportAtTop = shouldScrollToTopRef.current || nextState.didReset;
+      const writePayload = nextState.didReset ? nextState.text : nextState.delta;
+      const normalizedPayload = writePayload.replace(/\r?\n/g, "\r\n");
+      const afterWrite = () => {
+        if (keepViewportAtTop) {
+          currentTerminal.scrollToTop();
+          if (typeof window !== "undefined") {
+            if (initialViewportLockTimerRef.current != null) {
+              window.clearTimeout(initialViewportLockTimerRef.current);
+            }
+            initialViewportLockTimerRef.current = window.setTimeout(() => {
+              shouldScrollToTopRef.current = false;
+              initialViewportLockTimerRef.current = null;
+            }, INITIAL_VIEWPORT_LOCK_MS);
+          }
+        }
+      };
+
+      if (nextState.didReset) {
+        shouldScrollToTopRef.current = true;
+        currentTerminal.reset();
+      }
+
+      if (normalizedPayload) {
+        currentTerminal.write(normalizedPayload, afterWrite);
+      } else {
+        afterWrite();
+      }
+
+      outputVersionRef.current = nextState.version;
+      lastOutputRef.current = nextState.text;
     };
 
-    if (didResetOutput) {
-      terminal.reset();
-      if (normalizedFull) {
-        terminal.write(normalizedFull, afterWrite);
-      }
-    } else {
-      const delta = output.slice(previous.length);
-      const normalizedDelta = delta.replace(/\r?\n/g, "\r\n");
-      if (normalizedDelta) {
-        terminal.write(normalizedDelta, afterWrite);
-      }
-    }
-
-    lastOutputRef.current = output;
-  }, [output]);
+    applyOutputState();
+    return subscribeSessionOutput(sessionId, applyOutputState);
+  }, [initialOutput, sessionId]);
 
   return <div className="terminal-host__surface" ref={containerRef} data-testid="terminal-host" />;
 }

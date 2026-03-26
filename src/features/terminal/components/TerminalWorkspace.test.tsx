@@ -330,11 +330,10 @@ describe("TerminalWorkspace", () => {
     expect(createdTerminals[0]?.dispose).not.toHaveBeenCalled();
   });
 
-  test("prefers the shell prompt path over the fallback session path", () => {
+  test("shows the current session path from session metadata", () => {
     const controller = createController({
       ...sampleSession,
-      currentPath: "/",
-      lastOutput: "Last login...\r\nroot@example:/var/www/app# ",
+      currentPath: "/var/www/app",
     });
 
     render(<TerminalWorkspace controller={controller} />);

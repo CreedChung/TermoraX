@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SessionEvent, SessionTab } from "../entities/domain";
-import { mergeSessionEvent } from "./sessionEvents";
+import { mergeSessionEventMetadata } from "./sessionEvents";
 
 function session(): SessionTab {
   return {
@@ -19,7 +19,7 @@ function session(): SessionTab {
 }
 
 describe("mergeSessionEvent", () => {
-  it("appends output chunks to the matching session", () => {
+  it("updates the matching session timestamp for output chunks", () => {
     const event: SessionEvent = {
       kind: "output",
       sessionId: "session-1",
@@ -28,13 +28,12 @@ describe("mergeSessionEvent", () => {
       occurredAt: "2",
     };
 
-    const updated = mergeSessionEvent([session()], event);
+    const updated = mergeSessionEventMetadata([session()], event);
 
-    expect(updated[0].lastOutput).toBe("ready\r\nhello");
     expect(updated[0].updatedAt).toBe("2");
   });
 
-  it("updates status events and appends the status message", () => {
+  it("updates status events without mutating terminal transcript metadata", () => {
     const event: SessionEvent = {
       kind: "status",
       sessionId: "session-1",
@@ -44,26 +43,10 @@ describe("mergeSessionEvent", () => {
       occurredAt: "3",
     };
 
-    const updated = mergeSessionEvent([session()], event);
+    const updated = mergeSessionEventMetadata([session()], event);
 
     expect(updated[0].status).toBe("disconnected");
-    expect(updated[0].lastOutput).toBe("ready\r\nclosed");
+    expect(updated[0].lastOutput).toBe("ready");
     expect(updated[0].updatedAt).toBe("3");
-  });
-
-  it("keeps only the most recent output suffix when the buffer grows too large", () => {
-    const largeChunk = "a".repeat(250_000);
-    const event: SessionEvent = {
-      kind: "output",
-      sessionId: "session-1",
-      stream: "stdout",
-      chunk: largeChunk,
-      occurredAt: "4",
-    };
-
-    const updated = mergeSessionEvent([session()], event);
-
-    expect(updated[0].lastOutput.length).toBe(200_000);
-    expect(updated[0].lastOutput.endsWith("a".repeat(32))).toBe(true);
   });
 });

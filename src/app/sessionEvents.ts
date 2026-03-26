@@ -1,24 +1,10 @@
 import type { SessionEvent, SessionTab } from "../entities/domain";
 
-const MAX_SESSION_OUTPUT_CHARS = 200_000;
-
-function appendSessionOutput(base: string, addition: string): string {
-  if (!addition) {
-    return base;
-  }
-
-  const next = `${base}${addition}`;
-  if (next.length <= MAX_SESSION_OUTPUT_CHARS) {
-    return next;
-  }
-
-  return next.slice(-MAX_SESSION_OUTPUT_CHARS);
-}
-
 /**
- * Merges backend-driven session events into the in-memory tab list.
+ * Merges backend-driven session metadata into the in-memory tab list while
+ * keeping terminal transcript buffering outside of React workspace state.
  */
-export function mergeSessionEvent(sessions: SessionTab[], event: SessionEvent): SessionTab[] {
+export function mergeSessionEventMetadata(sessions: SessionTab[], event: SessionEvent): SessionTab[] {
   let mutated = false;
 
   const updated = sessions.map((session) => {
@@ -29,24 +15,26 @@ export function mergeSessionEvent(sessions: SessionTab[], event: SessionEvent): 
     mutated = true;
 
     if (event.kind === "output") {
+      if (session.updatedAt === event.occurredAt) {
+        return session;
+      }
+
       return {
         ...session,
-        lastOutput: appendSessionOutput(session.lastOutput, event.chunk),
         updatedAt: event.occurredAt,
       };
     }
 
-    const next = {
-      ...session,
-      status: event.status ?? session.status,
-      updatedAt: event.occurredAt,
-    } satisfies SessionTab;
-
-    if (event.message) {
-      next.lastOutput = appendSessionOutput(session.lastOutput, event.message);
+    const nextStatus = event.status ?? session.status;
+    if (session.status === nextStatus && session.updatedAt === event.occurredAt) {
+      return session;
     }
 
-    return next;
+    return {
+      ...session,
+      status: nextStatus,
+      updatedAt: event.occurredAt,
+    };
   });
 
   return mutated ? updated : sessions;
