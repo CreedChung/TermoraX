@@ -9,7 +9,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "smoke:windows": "powershell -ExecutionPolicy Bypass -File scripts/windows-smoke.ps1"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
