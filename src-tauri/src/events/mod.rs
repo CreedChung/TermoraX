@@ -1,5 +1,7 @@
 /// Event emitted when a live SSH session produces terminal output or lifecycle changes.
 pub const SESSION_EVENT: &str = "workspace://session";
+/// Event emitted when a transfer task state changes.
+pub const TRANSFER_EVENT: &str = "workspace://transfer";
 
 use serde::Serialize;
 

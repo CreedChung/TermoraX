@@ -2,6 +2,10 @@ use std::{
     cmp::Ordering,
     fs,
     path::Path,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering as AtomicOrdering},
+    },
     time::{Duration, Instant},
 };
 
@@ -10,7 +14,10 @@ use russh_sftp::{
     client::{SftpSession, error::Error as SftpError, fs::DirEntry},
     protocol::{FileAttributes, FileType, StatusCode},
 };
-use tokio::io::AsyncWriteExt;
+use tokio::{
+    fs::File,
+    io::{AsyncReadExt, AsyncWriteExt},
+};
 
 use crate::{
     error::{AppError, AppResult},
@@ -19,6 +26,7 @@ use crate::{
 };
 
 const DEFAULT_SFTP_TIMEOUT_SECS: u64 = 10;
+const TRANSFER_BUFFER_SIZE: usize = 64 * 1024;
 
 /// Result returned after listing a remote directory.
 #[derive(Debug, Clone)]
@@ -66,7 +74,9 @@ impl RusshSftpService {
         let canonical_path = sftp
             .canonicalize(requested_path.as_str())
             .await
-            .map_err(|error| classify_sftp_error("sftp_path_resolve_failed", "解析远程目录失败", error))?;
+            .map_err(|error| {
+                classify_sftp_error("sftp_path_resolve_failed", "解析远程目录失败", error)
+            })?;
         debug_log(
             "list_directory.canonicalize.done",
             format!(
@@ -102,47 +112,106 @@ impl RusshSftpService {
         })
     }
 
-    /// Uploads a local file to the provided remote path.
-    pub async fn upload_file(
+    /// Uploads a local file to the provided remote path in chunks.
+    pub async fn upload_file_with_progress<F>(
         &self,
         connection: &client::Handle<TermoraXClientHandler>,
         local_path: &Path,
         remote_path: &str,
-    ) -> AppResult<u64> {
-        let bytes = fs::read(local_path)?;
+        cancel_requested: Arc<AtomicBool>,
+        mut on_progress: F,
+    ) -> AppResult<u64>
+    where
+        F: FnMut(u64, u64) + Send,
+    {
+        let mut local_file = File::open(local_path).await?;
+        let bytes_total = local_file.metadata().await?.len();
         let sftp = self.open_session(connection).await?;
-        let mut remote_file = sftp
-            .create(remote_path)
-            .await
-            .map_err(|error| classify_sftp_error("sftp_upload_failed", "上传远程文件失败", error))?;
+        let mut remote_file = sftp.create(remote_path).await.map_err(|error| {
+            classify_sftp_error("sftp_upload_failed", "上传远程文件失败", error)
+        })?;
 
-        remote_file
-            .write_all(&bytes)
-            .await
-            .map_err(|error| classify_sftp_error("sftp_upload_failed", "写入远程文件失败", error.into()))?;
+        let mut buffer = vec![0_u8; TRANSFER_BUFFER_SIZE];
+        let mut bytes_transferred = 0_u64;
 
-        Ok(bytes.len() as u64)
+        loop {
+            ensure_transfer_not_canceled(&cancel_requested)?;
+            let read = local_file.read(&mut buffer).await?;
+            if read == 0 {
+                break;
+            }
+
+            remote_file
+                .write_all(&buffer[..read])
+                .await
+                .map_err(|error| {
+                    classify_sftp_error("sftp_upload_failed", "写入远程文件失败", error.into())
+                })?;
+
+            bytes_transferred = bytes_transferred.saturating_add(read as u64);
+            on_progress(bytes_transferred, bytes_total);
+        }
+
+        if let Err(error) = ensure_transfer_not_canceled(&cancel_requested) {
+            let _ = sftp.remove_file(remote_path).await;
+            return Err(error);
+        }
+
+        Ok(bytes_transferred)
     }
 
-    /// Downloads a remote file into the provided local path.
-    pub async fn download_file(
+    /// Downloads a remote file into the provided local path in chunks.
+    pub async fn download_file_with_progress<F>(
         &self,
         connection: &client::Handle<TermoraXClientHandler>,
         remote_path: &str,
         local_path: &Path,
-    ) -> AppResult<u64> {
+        cancel_requested: Arc<AtomicBool>,
+        mut on_progress: F,
+    ) -> AppResult<u64>
+    where
+        F: FnMut(u64, u64) + Send,
+    {
         let sftp = self.open_session(connection).await?;
-        let bytes = sftp
-            .read(remote_path)
+        let bytes_total = sftp
+            .metadata(remote_path)
             .await
-            .map_err(|error| classify_sftp_error("sftp_download_failed", "下载远程文件失败", error))?;
+            .map_err(|error| {
+                classify_sftp_error("sftp_download_failed", "读取远程文件信息失败", error)
+            })?
+            .size
+            .unwrap_or(0);
+        let mut remote_file = sftp.open(remote_path).await.map_err(|error| {
+            classify_sftp_error("sftp_download_failed", "打开远程文件失败", error)
+        })?;
 
         if let Some(parent) = local_path.parent() {
             fs::create_dir_all(parent)?;
         }
-        fs::write(local_path, &bytes)?;
+        let mut local_file = File::create(local_path).await?;
+        let mut buffer = vec![0_u8; TRANSFER_BUFFER_SIZE];
+        let mut bytes_transferred = 0_u64;
 
-        Ok(bytes.len() as u64)
+        loop {
+            ensure_transfer_not_canceled(&cancel_requested)?;
+            let read = remote_file.read(&mut buffer).await.map_err(|error| {
+                classify_sftp_error("sftp_download_failed", "读取远程文件失败", error.into())
+            })?;
+            if read == 0 {
+                break;
+            }
+
+            local_file.write_all(&buffer[..read]).await?;
+            bytes_transferred = bytes_transferred.saturating_add(read as u64);
+            on_progress(bytes_transferred, bytes_total);
+        }
+
+        if let Err(error) = ensure_transfer_not_canceled(&cancel_requested) {
+            let _ = fs::remove_file(local_path);
+            return Err(error);
+        }
+
+        Ok(bytes_transferred)
     }
 
     /// Creates a remote directory at the provided path.
@@ -152,9 +221,9 @@ impl RusshSftpService {
         remote_path: &str,
     ) -> AppResult<()> {
         let sftp = self.open_session(connection).await?;
-        sftp.create_dir(remote_path)
-            .await
-            .map_err(|error| classify_sftp_error("sftp_create_dir_failed", "创建远程目录失败", error))
+        sftp.create_dir(remote_path).await.map_err(|error| {
+            classify_sftp_error("sftp_create_dir_failed", "创建远程目录失败", error)
+        })
     }
 
     /// Deletes a remote file at the provided path.
@@ -164,9 +233,9 @@ impl RusshSftpService {
         remote_path: &str,
     ) -> AppResult<()> {
         let sftp = self.open_session(connection).await?;
-        sftp.remove_file(remote_path)
-            .await
-            .map_err(|error| classify_sftp_error("sftp_delete_file_failed", "删除远程文件失败", error))
+        sftp.remove_file(remote_path).await.map_err(|error| {
+            classify_sftp_error("sftp_delete_file_failed", "删除远程文件失败", error)
+        })
     }
 
     /// Deletes an empty remote directory at the provided path.
@@ -176,9 +245,9 @@ impl RusshSftpService {
         remote_path: &str,
     ) -> AppResult<()> {
         let sftp = self.open_session(connection).await?;
-        sftp.remove_dir(remote_path)
-            .await
-            .map_err(|error| classify_sftp_error("sftp_delete_dir_failed", "删除远程目录失败", error))
+        sftp.remove_dir(remote_path).await.map_err(|error| {
+            classify_sftp_error("sftp_delete_dir_failed", "删除远程目录失败", error)
+        })
     }
 
     /// Renames a remote file-system entry.
@@ -204,7 +273,9 @@ impl RusshSftpService {
         let channel = tokio::time::timeout(timeout, connection.channel_open_session())
             .await
             .map_err(|_| AppError::new("sftp_open_timeout", "SFTP 通道打开超时"))?
-            .map_err(|error| classify_ssh_channel_error("sftp_open_failed", "SFTP 通道打开失败", error))?;
+            .map_err(|error| {
+                classify_ssh_channel_error("sftp_open_failed", "SFTP 通道打开失败", error)
+            })?;
         debug_log(
             "open_session.channel_ready",
             format!("elapsed_ms={}", started_at.elapsed().as_millis()),
@@ -214,7 +285,9 @@ impl RusshSftpService {
         channel
             .request_subsystem(true, "sftp")
             .await
-            .map_err(|error| classify_ssh_channel_error("sftp_subsystem_failed", "SFTP 子系统启动失败", error))?;
+            .map_err(|error| {
+                classify_ssh_channel_error("sftp_subsystem_failed", "SFTP 子系统启动失败", error)
+            })?;
         debug_log(
             "open_session.subsystem_ready",
             format!("elapsed_ms={}", started_at.elapsed().as_millis()),
@@ -235,6 +308,14 @@ impl RusshSftpService {
 /// Returns the default SFTP service used by the backend runtime.
 pub fn default_sftp_service() -> RusshSftpService {
     RusshSftpService::new()
+}
+
+fn ensure_transfer_not_canceled(cancel_requested: &Arc<AtomicBool>) -> AppResult<()> {
+    if cancel_requested.load(AtomicOrdering::Relaxed) {
+        return Err(AppError::new("transfer_canceled", "传输已取消"));
+    }
+
+    Ok(())
 }
 
 fn debug_log(event: &str, message: impl AsRef<str>) {
@@ -342,7 +423,11 @@ fn classify_ssh_channel_error(
     AppError::new(default_code, format!("{fallback_message}: {}", error))
 }
 
-fn classify_sftp_error(default_code: &'static str, fallback_message: &'static str, error: SftpError) -> AppError {
+fn classify_sftp_error(
+    default_code: &'static str,
+    fallback_message: &'static str,
+    error: SftpError,
+) -> AppError {
     let code = match &error {
         SftpError::Timeout => "sftp_timeout",
         SftpError::Status(status) => match status.status_code {
@@ -352,7 +437,9 @@ fn classify_sftp_error(default_code: &'static str, fallback_message: &'static st
             StatusCode::OpUnsupported => "sftp_unsupported",
             _ => default_code,
         },
-        SftpError::IO(message) if message.to_ascii_lowercase().contains("timed out") => "sftp_timeout",
+        SftpError::IO(message) if message.to_ascii_lowercase().contains("timed out") => {
+            "sftp_timeout"
+        }
         _ => default_code,
     };
 

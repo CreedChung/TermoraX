@@ -2,16 +2,20 @@ use std::{
     collections::HashMap,
     fs,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering as AtomicOrdering},
+    },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use russh::{client, ChannelMsg, ChannelReadHalf, ChannelWriteHalf};
+use russh::{ChannelMsg, ChannelReadHalf, ChannelWriteHalf, client};
 use tauri::{AppHandle, Emitter};
+use tokio::sync::Mutex as AsyncMutex;
 
 use crate::{
     error::{AppError, AppResult},
-    events::{SessionOutputEventPayload, SessionStatusEventPayload, SESSION_EVENT},
+    events::{SESSION_EVENT, SessionOutputEventPayload, SessionStatusEventPayload, TRANSFER_EVENT},
     extensions::builtin_extensions,
     models::{
         ActivityEntry, BootstrapState, CommandSnippet, ConnectionExportResult,
@@ -23,7 +27,7 @@ use crate::{
 };
 
 struct LiveSessionRuntime {
-    connection: client::Handle<ssh::TermoraXClientHandler>,
+    connection: Arc<AsyncMutex<client::Handle<ssh::TermoraXClientHandler>>>,
     writer: ChannelWriteHalf<client::Msg>,
 }
 
@@ -40,11 +44,12 @@ impl LiveSessionRuntime {
         ))
     }
 
-    fn close_detached(mut self, context: &'static str) {
+    fn close_detached(self, context: &'static str) {
         tauri::async_runtime::spawn(async move {
             debug_log("runtime_close.start", format!("context={context}"));
+            let mut connection = self.connection.lock().await;
             let result = ssh::default_ssh_service()
-                .close_shell(&mut self.connection, &self.writer)
+                .close_shell(&mut connection, &self.writer)
                 .await;
 
             match result {
@@ -70,7 +75,17 @@ const SESSION_EVENT_FLUSH_DELAY_MS: u64 = 33;
 const MAX_BATCHED_SESSION_OUTPUT_CHARS: usize = 16 * 1024;
 const SESSION_LOG_PREVIEW_CHARS: usize = 120;
 
+struct PendingTransferExecution {
+    task_id: String,
+    direction: String,
+    local_path: String,
+    remote_path: String,
+    connection: Arc<AsyncMutex<client::Handle<ssh::TermoraXClientHandler>>>,
+    cancel_requested: Arc<AtomicBool>,
+}
+
 /// Shared backend state managed by Tauri.
+#[derive(Clone)]
 pub struct AppState {
     store: Arc<Mutex<AppStore>>,
 }
@@ -197,6 +212,12 @@ impl AppState {
 
         let mut store = self.store.lock()?;
         store.trust_connection_host(&connection, &inspected_host)
+    }
+
+    pub fn delete_trusted_host(&self, host: &str, port: u16) -> AppResult<BootstrapState> {
+        let mut store = self.store.lock()?;
+        store.delete_trusted_host(host, port)?;
+        Ok(store.snapshot())
     }
 
     pub fn open_session(
@@ -427,9 +448,12 @@ impl AppState {
             (runtime, requested_path)
         };
         let started_at = Instant::now();
-        let result = tauri::async_runtime::block_on(
-            sftp::default_sftp_service().list_directory(&runtime.connection, &requested_path),
-        );
+        let result = tauri::async_runtime::block_on(async {
+            let connection = runtime.connection.lock().await;
+            sftp::default_sftp_service()
+                .list_directory(&*connection, &requested_path)
+                .await
+        });
         let result = {
             let mut store = self.store.lock()?;
             store.restore_runtime(session_id, runtime);
@@ -467,9 +491,12 @@ impl AppState {
             store.take_runtime(session_id)?
         };
         let started_at = Instant::now();
-        let result = tauri::async_runtime::block_on(
-            sftp::default_sftp_service().list_directory(&runtime.connection, path),
-        );
+        let result = tauri::async_runtime::block_on(async {
+            let connection = runtime.connection.lock().await;
+            sftp::default_sftp_service()
+                .list_directory(&*connection, path)
+                .await
+        });
         let result = {
             let mut store = self.store.lock()?;
             store.restore_runtime(session_id, runtime);
@@ -504,9 +531,12 @@ impl AppState {
             store.take_runtime(session_id)?
         };
         let started_at = Instant::now();
-        let result = tauri::async_runtime::block_on(
-            sftp::default_sftp_service().list_directory(&runtime.connection, path),
-        );
+        let result = tauri::async_runtime::block_on(async {
+            let connection = runtime.connection.lock().await;
+            sftp::default_sftp_service()
+                .list_directory(&*connection, path)
+                .await
+        });
         let mut store = self.store.lock()?;
         store.restore_runtime(session_id, runtime);
         let listing = result?;
@@ -542,9 +572,12 @@ impl AppState {
             (runtime, parent_path)
         };
         let started_at = Instant::now();
-        let result = tauri::async_runtime::block_on(
-            sftp::default_sftp_service().list_directory(&runtime.connection, &parent_path),
-        );
+        let result = tauri::async_runtime::block_on(async {
+            let connection = runtime.connection.lock().await;
+            sftp::default_sftp_service()
+                .list_directory(&*connection, &parent_path)
+                .await
+        });
         let mut store = self.store.lock()?;
         store.restore_runtime(session_id, runtime);
         let listing = result?;
@@ -562,25 +595,37 @@ impl AppState {
     /// Uploads a local file into the current remote workspace.
     pub fn upload_file_to_remote(
         &self,
+        app_handle: &AppHandle,
         session_id: &str,
         local_path: &str,
         remote_path: &str,
     ) -> AppResult<BootstrapState> {
-        let mut store = self.store.lock()?;
-        store.upload_file_to_remote(session_id, local_path, remote_path)?;
-        Ok(store.snapshot())
+        let (execution, snapshot) = {
+            let mut store = self.store.lock()?;
+            let execution = store.start_upload_transfer(session_id, local_path, remote_path)?;
+            let snapshot = store.snapshot();
+            (execution, snapshot)
+        };
+        self.spawn_transfer_task(app_handle.clone(), execution);
+        Ok(snapshot)
     }
 
     /// Downloads a remote file into a local target path.
     pub fn download_file_from_remote(
         &self,
+        app_handle: &AppHandle,
         session_id: &str,
         remote_path: &str,
         local_path: &str,
     ) -> AppResult<BootstrapState> {
-        let mut store = self.store.lock()?;
-        store.download_file_from_remote(session_id, remote_path, local_path)?;
-        Ok(store.snapshot())
+        let (execution, snapshot) = {
+            let mut store = self.store.lock()?;
+            let execution = store.start_download_transfer(session_id, remote_path, local_path)?;
+            let snapshot = store.snapshot();
+            (execution, snapshot)
+        };
+        self.spawn_transfer_task(app_handle.clone(), execution);
+        Ok(snapshot)
     }
 
     /// Creates a remote directory for the active SFTP session.
@@ -619,9 +664,25 @@ impl AppState {
     }
 
     /// Retries a previously failed transfer task by creating a new transfer attempt.
-    pub fn retry_transfer_task(&self, task_id: &str) -> AppResult<BootstrapState> {
+    pub fn retry_transfer_task(
+        &self,
+        app_handle: &AppHandle,
+        task_id: &str,
+    ) -> AppResult<BootstrapState> {
+        let (execution, snapshot) = {
+            let mut store = self.store.lock()?;
+            let execution = store.retry_transfer_task(task_id)?;
+            let snapshot = store.snapshot();
+            (execution, snapshot)
+        };
+        self.spawn_transfer_task(app_handle.clone(), execution);
+        Ok(snapshot)
+    }
+
+    /// Requests cancellation for an active transfer task.
+    pub fn cancel_transfer_task(&self, task_id: &str) -> AppResult<BootstrapState> {
         let mut store = self.store.lock()?;
-        store.retry_transfer_task(task_id)?;
+        store.cancel_transfer_task(task_id)?;
         Ok(store.snapshot())
     }
 
@@ -709,6 +770,118 @@ impl AppState {
             }
         });
     }
+
+    fn spawn_transfer_task(&self, app_handle: AppHandle, execution: PendingTransferExecution) {
+        let store = Arc::clone(&self.store);
+
+        tauri::async_runtime::spawn(async move {
+            let task_id = execution.task_id.clone();
+            let local_path = execution.local_path.clone();
+            let remote_path = execution.remote_path.clone();
+            let direction = execution.direction.clone();
+            let cancel_requested = execution.cancel_requested.clone();
+            let result = match direction.as_str() {
+                "upload" => {
+                    let progress_store = Arc::clone(&store);
+                    let progress_app_handle = app_handle.clone();
+                    let progress_task_id = task_id.clone();
+                    let local_path_ref = Path::new(&local_path);
+                    let connection = execution.connection.lock().await;
+                    sftp::default_sftp_service()
+                        .upload_file_with_progress(
+                            &*connection,
+                            local_path_ref,
+                            &remote_path,
+                            cancel_requested,
+                            move |bytes_transferred, bytes_total| {
+                                if let Ok(mut guard) = progress_store.lock() {
+                                    if let Some(task) = guard.update_transfer_task_progress(
+                                        &progress_task_id,
+                                        bytes_transferred,
+                                        bytes_total,
+                                    ) {
+                                        emit_transfer_event(&progress_app_handle, task);
+                                    }
+                                }
+                            },
+                        )
+                        .await
+                }
+                "download" => {
+                    let progress_store = Arc::clone(&store);
+                    let progress_app_handle = app_handle.clone();
+                    let progress_task_id = task_id.clone();
+                    let local_path_ref = Path::new(&local_path);
+                    let connection = execution.connection.lock().await;
+                    sftp::default_sftp_service()
+                        .download_file_with_progress(
+                            &*connection,
+                            &remote_path,
+                            local_path_ref,
+                            cancel_requested,
+                            move |bytes_transferred, bytes_total| {
+                                if let Ok(mut guard) = progress_store.lock() {
+                                    if let Some(task) = guard.update_transfer_task_progress(
+                                        &progress_task_id,
+                                        bytes_transferred,
+                                        bytes_total,
+                                    ) {
+                                        emit_transfer_event(&progress_app_handle, task);
+                                    }
+                                }
+                            },
+                        )
+                        .await
+                }
+                _ => Err(AppError::new(
+                    "transfer_task_invalid_direction",
+                    "传输任务方向无效，无法执行",
+                )),
+            };
+
+            let final_task = {
+                let Ok(mut guard) = store.lock() else {
+                    return;
+                };
+
+                match result {
+                    Ok(bytes_transferred) => {
+                        let task = guard.finish_transfer_task_success(&task_id, bytes_transferred);
+                        if direction == "upload" {
+                            guard.record_activity(format!(
+                                "已上传文件 {} -> {}。",
+                                local_path, remote_path
+                            ));
+                        } else {
+                            guard.record_activity(format!(
+                                "已下载文件 {} -> {}。",
+                                remote_path, local_path
+                            ));
+                        }
+                        task
+                    }
+                    Err(error) if error.code == "transfer_canceled" => {
+                        let task = guard.finish_transfer_task_canceled(&task_id);
+                        guard.record_activity(format!("已取消传输任务 {}。", task_id));
+                        task
+                    }
+                    Err(error) => {
+                        let task =
+                            guard.finish_transfer_task_failure(&task_id, error.message.clone());
+                        guard.record_activity(format!(
+                            "传输任务 {} 失败：{}。",
+                            task_id, error.message
+                        ));
+                        task
+                    }
+                }
+            };
+
+            if let Some(task) = final_task {
+                emit_transfer_event(&app_handle, task);
+            }
+        });
+    }
 }
 
 struct AppStore {
@@ -717,6 +890,7 @@ struct AppStore {
     sessions: Vec<SessionTab>,
     activity: Vec<ActivityEntry>,
     transfers: Vec<TransferTask>,
+    transfer_controls: HashMap<String, Arc<AtomicBool>>,
     runtimes: HashMap<String, LiveSessionRuntime>,
     reader_generations: HashMap<String, u64>,
     next_reader_generation: u64,
@@ -757,6 +931,7 @@ impl AppStore {
                 timestamp: now_iso(),
             }],
             transfers: Vec::new(),
+            transfer_controls: HashMap::new(),
             runtimes: HashMap::new(),
             reader_generations: HashMap::new(),
             next_reader_generation: 1,
@@ -772,6 +947,7 @@ impl AppStore {
             extensions: builtin_extensions(),
             activity: self.activity.clone(),
             transfers: self.transfers.clone(),
+            trusted_hosts: self.persisted.trusted_hosts.clone(),
         }
     }
 
@@ -917,6 +1093,23 @@ impl AppStore {
         ))
     }
 
+    fn delete_trusted_host(&mut self, host: &str, port: u16) -> AppResult<()> {
+        let before = self.persisted.trusted_hosts.len();
+        self.persisted
+            .trusted_hosts
+            .retain(|item| !(item.host == host && item.port == port));
+
+        if before == self.persisted.trusted_hosts.len() {
+            return Err(AppError::new(
+                "trusted_host_not_found",
+                format!("未找到已信任主机 {}:{}", host, port),
+            ));
+        }
+
+        self.record_activity(format!("已移除已信任主机 {}:{}。", host, port));
+        self.persist()
+    }
+
     fn open_live_session(
         &mut self,
         connection: &ConnectionProfile,
@@ -952,7 +1145,7 @@ impl AppStore {
         self.runtimes.insert(
             session_id.clone(),
             LiveSessionRuntime {
-                connection: ssh_connection,
+                connection: Arc::new(AsyncMutex::new(ssh_connection)),
                 writer,
             },
         );
@@ -1002,7 +1195,7 @@ impl AppStore {
         self.runtimes.insert(
             session_id.to_string(),
             LiveSessionRuntime {
-                connection: ssh_connection,
+                connection: Arc::new(AsyncMutex::new(ssh_connection)),
                 writer,
             },
         );
@@ -1119,75 +1312,32 @@ impl AppStore {
             .map(|item| item.command.clone())
             .ok_or_else(|| AppError::new("snippet_not_found", snippet_id.to_string()))?;
 
-        self.send_session_input(session_id, &command)
+        let payload = if command.ends_with('\n') || command.ends_with('\r') {
+            command
+        } else {
+            format!("{command}\n")
+        };
+
+        self.send_session_input(session_id, &payload)
     }
 
-    fn upload_file_to_remote(
+    fn start_upload_transfer(
         &mut self,
         session_id: &str,
         local_path: &str,
         remote_path: &str,
-    ) -> AppResult<()> {
-        let local_path_ref = Path::new(local_path);
-        let file_size = fs::metadata(local_path_ref)?.len();
-        let task_id =
-            self.start_transfer_task(session_id, "upload", local_path, remote_path, file_size);
-        let runtime = self.runtimes.get(session_id).ok_or_else(|| {
-            AppError::new("session_not_connected", "当前会话尚未建立实时 SSH 连接")
-        })?;
-
-        match tauri::async_runtime::block_on(sftp::default_sftp_service().upload_file(
-            &runtime.connection,
-            local_path_ref,
-            remote_path,
-        )) {
-            Ok(bytes_transferred) => {
-                self.finish_transfer_task_success(&task_id, bytes_transferred);
-                self.record_activity(format!(
-                    "已上传文件 {} -> {}。",
-                    local_path_ref.display(),
-                    remote_path
-                ));
-                Ok(())
-            }
-            Err(error) => {
-                self.finish_transfer_task_failure(&task_id, error.message.clone());
-                Err(error)
-            }
-        }
+    ) -> AppResult<PendingTransferExecution> {
+        let file_size = fs::metadata(Path::new(local_path))?.len();
+        self.start_transfer_execution(session_id, "upload", local_path, remote_path, file_size)
     }
 
-    fn download_file_from_remote(
+    fn start_download_transfer(
         &mut self,
         session_id: &str,
         remote_path: &str,
         local_path: &str,
-    ) -> AppResult<()> {
-        let local_path_ref = Path::new(local_path);
-        let task_id = self.start_transfer_task(session_id, "download", local_path, remote_path, 0);
-        let runtime = self.runtimes.get(session_id).ok_or_else(|| {
-            AppError::new("session_not_connected", "当前会话尚未建立实时 SSH 连接")
-        })?;
-
-        match tauri::async_runtime::block_on(sftp::default_sftp_service().download_file(
-            &runtime.connection,
-            remote_path,
-            local_path_ref,
-        )) {
-            Ok(bytes_transferred) => {
-                self.finish_transfer_task_success(&task_id, bytes_transferred);
-                self.record_activity(format!(
-                    "已下载文件 {} -> {}。",
-                    remote_path,
-                    local_path_ref.display()
-                ));
-                Ok(())
-            }
-            Err(error) => {
-                self.finish_transfer_task_failure(&task_id, error.message.clone());
-                Err(error)
-            }
-        }
+    ) -> AppResult<PendingTransferExecution> {
+        self.start_transfer_execution(session_id, "download", local_path, remote_path, 0)
     }
 
     fn create_remote_directory(&mut self, session_id: &str, path: &str) -> AppResult<()> {
@@ -1195,9 +1345,12 @@ impl AppStore {
             AppError::new("session_not_connected", "当前会话尚未建立实时 SSH 连接")
         })?;
 
-        tauri::async_runtime::block_on(
-            sftp::default_sftp_service().create_directory(&runtime.connection, path),
-        )?;
+        tauri::async_runtime::block_on(async {
+            let connection = runtime.connection.lock().await;
+            sftp::default_sftp_service()
+                .create_directory(&*connection, path)
+                .await
+        })?;
         self.record_activity(format!("已创建远程目录 {}。", path));
         Ok(())
     }
@@ -1212,11 +1365,12 @@ impl AppStore {
             AppError::new("session_not_connected", "当前会话尚未建立实时 SSH 连接")
         })?;
 
-        tauri::async_runtime::block_on(sftp::default_sftp_service().rename_path(
-            &runtime.connection,
-            path,
-            target_path,
-        ))?;
+        tauri::async_runtime::block_on(async {
+            let connection = runtime.connection.lock().await;
+            sftp::default_sftp_service()
+                .rename_path(&*connection, path, target_path)
+                .await
+        })?;
         self.record_activity(format!("已重命名远程路径 {} -> {}。", path, target_path));
         Ok(())
     }
@@ -1232,30 +1386,36 @@ impl AppStore {
         })?;
 
         if is_directory {
-            tauri::async_runtime::block_on(
-                sftp::default_sftp_service().delete_directory(&runtime.connection, path),
-            )?;
+            tauri::async_runtime::block_on(async {
+                let connection = runtime.connection.lock().await;
+                sftp::default_sftp_service()
+                    .delete_directory(&*connection, path)
+                    .await
+            })?;
             self.record_activity(format!("已删除远程目录 {}。", path));
         } else {
-            tauri::async_runtime::block_on(
-                sftp::default_sftp_service().delete_file(&runtime.connection, path),
-            )?;
+            tauri::async_runtime::block_on(async {
+                let connection = runtime.connection.lock().await;
+                sftp::default_sftp_service()
+                    .delete_file(&*connection, path)
+                    .await
+            })?;
             self.record_activity(format!("已删除远程文件 {}。", path));
         }
 
         Ok(())
     }
 
-    fn retry_transfer_task(&mut self, task_id: &str) -> AppResult<()> {
+    fn retry_transfer_task(&mut self, task_id: &str) -> AppResult<PendingTransferExecution> {
         let request = self.build_retry_transfer_request(task_id)?;
 
         match request.direction.as_str() {
-            "upload" => self.upload_file_to_remote(
+            "upload" => self.start_upload_transfer(
                 &request.session_id,
                 &request.local_path,
                 &request.remote_path,
             ),
-            "download" => self.download_file_from_remote(
+            "download" => self.start_download_transfer(
                 &request.session_id,
                 &request.remote_path,
                 &request.local_path,
@@ -1267,9 +1427,39 @@ impl AppStore {
         }
     }
 
+    fn cancel_transfer_task(&mut self, task_id: &str) -> AppResult<TransferTask> {
+        let control = self
+            .transfer_controls
+            .get(task_id)
+            .cloned()
+            .ok_or_else(|| AppError::new("transfer_task_not_found", task_id.to_string()))?;
+        let updated_task = {
+            let task = self
+                .transfers
+                .iter_mut()
+                .find(|item| item.id == task_id)
+                .ok_or_else(|| AppError::new("transfer_task_not_found", task_id.to_string()))?;
+
+            if task.status != "running" && task.status != "canceling" {
+                return Err(AppError::new(
+                    "transfer_task_not_cancelable",
+                    "仅进行中的传输任务支持取消",
+                ));
+            }
+
+            control.store(true, AtomicOrdering::Relaxed);
+            task.status = "canceling".into();
+            task.message = Some("正在取消…".into());
+            task.clone()
+        };
+        self.record_activity(format!("正在取消传输任务 {}。", task_id));
+        Ok(updated_task)
+    }
+
     fn clear_completed_transfer_tasks(&mut self) {
         let before = self.transfers.len();
-        self.transfers.retain(|task| task.status == "running");
+        self.transfers
+            .retain(|task| task.status == "running" || task.status == "canceling");
         let removed = before.saturating_sub(self.transfers.len());
 
         if removed > 0 {
@@ -1406,6 +1596,52 @@ impl AppStore {
         self.activity.truncate(20);
     }
 
+    fn start_transfer_execution(
+        &mut self,
+        session_id: &str,
+        direction: &str,
+        local_path: &str,
+        remote_path: &str,
+        bytes_total: u64,
+    ) -> AppResult<PendingTransferExecution> {
+        let connection = self
+            .runtimes
+            .get(session_id)
+            .ok_or_else(|| AppError::new("session_not_connected", "当前会话尚未建立实时 SSH 连接"))?
+            .connection
+            .clone();
+        let cancel_requested = Arc::new(AtomicBool::new(false));
+        let task_id = self.start_transfer_task(
+            session_id,
+            direction,
+            local_path,
+            remote_path,
+            bytes_total,
+            cancel_requested.clone(),
+        );
+
+        if direction == "upload" {
+            self.record_activity(format!(
+                "已开始上传文件 {} -> {}。",
+                local_path, remote_path
+            ));
+        } else {
+            self.record_activity(format!(
+                "已开始下载文件 {} -> {}。",
+                remote_path, local_path
+            ));
+        }
+
+        Ok(PendingTransferExecution {
+            task_id,
+            direction: direction.to_string(),
+            local_path: local_path.to_string(),
+            remote_path: remote_path.to_string(),
+            connection,
+            cancel_requested,
+        })
+    }
+
     fn start_transfer_task(
         &mut self,
         session_id: &str,
@@ -1413,6 +1649,7 @@ impl AppStore {
         local_path: &str,
         remote_path: &str,
         bytes_total: u64,
+        cancel_requested: Arc<AtomicBool>,
     ) -> String {
         let task_id = next_id("transfer");
         self.transfers.insert(
@@ -1431,11 +1668,32 @@ impl AppStore {
                 message: None,
             },
         );
+        self.transfer_controls
+            .insert(task_id.clone(), cancel_requested);
         self.transfers.truncate(50);
         task_id
     }
 
-    fn finish_transfer_task_success(&mut self, task_id: &str, bytes_transferred: u64) {
+    fn update_transfer_task_progress(
+        &mut self,
+        task_id: &str,
+        bytes_transferred: u64,
+        bytes_total: u64,
+    ) -> Option<TransferTask> {
+        let task = self.transfers.iter_mut().find(|item| item.id == task_id)?;
+        task.bytes_transferred = bytes_transferred;
+        if bytes_total > 0 {
+            task.bytes_total = bytes_total;
+        }
+        Some(task.clone())
+    }
+
+    fn finish_transfer_task_success(
+        &mut self,
+        task_id: &str,
+        bytes_transferred: u64,
+    ) -> Option<TransferTask> {
+        self.transfer_controls.remove(task_id);
         if let Some(task) = self.transfers.iter_mut().find(|item| item.id == task_id) {
             task.status = "succeeded".into();
             task.bytes_transferred = bytes_transferred;
@@ -1444,15 +1702,38 @@ impl AppStore {
             }
             task.finished_at = Some(now_iso());
             task.message = None;
+            return Some(task.clone());
         }
+
+        None
     }
 
-    fn finish_transfer_task_failure(&mut self, task_id: &str, message: String) {
+    fn finish_transfer_task_failure(
+        &mut self,
+        task_id: &str,
+        message: String,
+    ) -> Option<TransferTask> {
+        self.transfer_controls.remove(task_id);
         if let Some(task) = self.transfers.iter_mut().find(|item| item.id == task_id) {
             task.status = "failed".into();
             task.finished_at = Some(now_iso());
             task.message = Some(message);
+            return Some(task.clone());
         }
+
+        None
+    }
+
+    fn finish_transfer_task_canceled(&mut self, task_id: &str) -> Option<TransferTask> {
+        self.transfer_controls.remove(task_id);
+        if let Some(task) = self.transfers.iter_mut().find(|item| item.id == task_id) {
+            task.status = "canceled".into();
+            task.finished_at = Some(now_iso());
+            task.message = Some("已取消".into());
+            return Some(task.clone());
+        }
+
+        None
     }
 
     // Retry is only valid for finished failed tasks. The returned request is
@@ -1616,14 +1897,22 @@ fn describe_session_ui_event(event: &SessionUiEvent) -> String {
             payload.session_id,
             payload.status,
             payload.occurred_at,
-            payload.message.as_ref().map(|message| message.len()).unwrap_or(0),
+            payload
+                .message
+                .as_ref()
+                .map(|message| message.len())
+                .unwrap_or(0),
             preview_log_text(payload.message.as_deref().unwrap_or_default())
         ),
     }
 }
 
 fn describe_snapshot_session(snapshot: &BootstrapState, session_id: &str) -> String {
-    match snapshot.sessions.iter().find(|session| session.id == session_id) {
+    match snapshot
+        .sessions
+        .iter()
+        .find(|session| session.id == session_id)
+    {
         Some(session) => format!(
             "snapshot_updated_at={} len={} preview={}",
             session.updated_at,
@@ -1680,7 +1969,7 @@ fn build_host_fingerprint_inspection(
             ("trusted".into(), Some(trusted_host.fingerprint.clone()))
         }
         Some(trusted_host) => ("mismatch".into(), Some(trusted_host.fingerprint.clone())),
-        None => ("requiresTrust".into(), None),
+        None => ("untrusted".into(), None),
     };
 
     HostFingerprintInspection {
@@ -1720,6 +2009,10 @@ fn emit_session_event(app_handle: &AppHandle, event: SessionUiEvent) {
     }
 }
 
+fn emit_transfer_event(app_handle: &AppHandle, task: TransferTask) {
+    let _ = app_handle.emit(TRANSFER_EVENT, task);
+}
+
 fn merge_pending_output_event(
     pending_output: &mut Option<SessionOutputEventPayload>,
     next_output: SessionOutputEventPayload,
@@ -1757,12 +2050,16 @@ fn flush_pending_output_event(
 
 #[cfg(test)]
 mod tests {
-    use std::{env, fs, path::PathBuf};
+    use std::{
+        env, fs,
+        path::PathBuf,
+        sync::{Arc, atomic::AtomicBool},
+    };
 
     use super::{
-        build_host_fingerprint_inspection, ensure_trust_request_matches,
-        live_session_initial_output, merge_pending_output_event, parent_remote_path,
-        reset_live_session_for_reconnect, AppState, AppStore, MAX_BATCHED_SESSION_OUTPUT_CHARS,
+        AppState, AppStore, MAX_BATCHED_SESSION_OUTPUT_CHARS, build_host_fingerprint_inspection,
+        ensure_trust_request_matches, live_session_initial_output, merge_pending_output_event,
+        parent_remote_path, reset_live_session_for_reconnect,
     };
     use crate::{
         events::SessionOutputEventPayload,
@@ -1999,7 +2296,7 @@ mod tests {
         assert_eq!(trusted.trust_status, "trusted");
         assert_eq!(mismatch.trust_status, "mismatch");
         assert_eq!(mismatch.trusted_fingerprint.as_deref(), Some("SHA256:old"));
-        assert_eq!(untrusted.trust_status, "requiresTrust");
+        assert_eq!(untrusted.trust_status, "untrusted");
     }
 
     #[test]
@@ -2033,6 +2330,7 @@ mod tests {
             "C:/tmp/demo.log",
             "/home/demo/demo.log",
             128,
+            Arc::new(AtomicBool::new(false)),
         );
         let download_task_id = store.start_transfer_task(
             "session-1",
@@ -2040,6 +2338,7 @@ mod tests {
             "D:/backup/demo.log",
             "/srv/demo.log",
             0,
+            Arc::new(AtomicBool::new(false)),
         );
 
         store.finish_transfer_task_success(&upload_task_id, 128);
@@ -2076,7 +2375,14 @@ mod tests {
         for index in 0..55 {
             let local_path = format!("C:/tmp/file-{}.txt", index);
             let remote_path = format!("/srv/file-{}.txt", index);
-            let _ = store.start_transfer_task("session-1", "upload", &local_path, &remote_path, 32);
+            let _ = store.start_transfer_task(
+                "session-1",
+                "upload",
+                &local_path,
+                &remote_path,
+                32,
+                Arc::new(AtomicBool::new(false)),
+            );
         }
 
         assert_eq!(store.transfers.len(), 50);
@@ -2095,6 +2401,7 @@ mod tests {
             "C:/tmp/demo.log",
             "/home/demo/demo.log",
             128,
+            Arc::new(AtomicBool::new(false)),
         );
         store.finish_transfer_task_failure(&failed_task_id, "failed".into());
         let running_task_id = store.start_transfer_task(
@@ -2103,6 +2410,7 @@ mod tests {
             "D:/tmp/demo.log",
             "/srv/demo.log",
             128,
+            Arc::new(AtomicBool::new(false)),
         );
 
         let request = store
@@ -2135,6 +2443,7 @@ mod tests {
             "C:/tmp/live.log",
             "/home/demo/live.log",
             32,
+            Arc::new(AtomicBool::new(false)),
         );
         let succeeded_task_id = store.start_transfer_task(
             "session-1",
@@ -2142,6 +2451,7 @@ mod tests {
             "C:/tmp/done.log",
             "/home/demo/done.log",
             64,
+            Arc::new(AtomicBool::new(false)),
         );
         store.finish_transfer_task_success(&succeeded_task_id, 64);
         let failed_task_id = store.start_transfer_task(
@@ -2150,6 +2460,7 @@ mod tests {
             "D:/tmp/fail.log",
             "/srv/fail.log",
             0,
+            Arc::new(AtomicBool::new(false)),
         );
         store.finish_transfer_task_failure(&failed_task_id, "failed".into());
 
@@ -2158,10 +2469,12 @@ mod tests {
         assert_eq!(store.transfers.len(), 1);
         assert_eq!(store.transfers[0].id, running_task_id);
         assert_eq!(store.transfers[0].status, "running");
-        assert!(store
-            .activity
-            .iter()
-            .any(|entry| entry.title.contains("已清理 2 个已完成传输任务")));
+        assert!(
+            store
+                .activity
+                .iter()
+                .any(|entry| entry.title.contains("已清理 2 个已完成传输任务"))
+        );
     }
 
     #[test]

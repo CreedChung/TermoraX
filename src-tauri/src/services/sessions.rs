@@ -53,14 +53,20 @@ pub fn next_session_title(existing_sessions: &[SessionTab], base_title: &str) ->
         return "会话".into();
     }
 
-    if !existing_sessions.iter().any(|session| session.title == base_title) {
+    if !existing_sessions
+        .iter()
+        .any(|session| session.title == base_title)
+    {
         return base_title.to_string();
     }
 
     let mut suffix = 1usize;
     loop {
         let candidate = format!("{}({})", base_title, suffix);
-        if !existing_sessions.iter().any(|session| session.title == candidate) {
+        if !existing_sessions
+            .iter()
+            .any(|session| session.title == candidate)
+        {
             return candidate;
         }
         suffix += 1;
@@ -69,7 +75,11 @@ pub fn next_session_title(existing_sessions: &[SessionTab], base_title: &str) ->
 
 /// Appends simulated terminal input to a session transcript.
 #[allow(dead_code)]
-pub fn append_simulated_input(sessions: &mut [SessionTab], session_id: &str, input: &str) -> AppResult<String> {
+pub fn append_simulated_input(
+    sessions: &mut [SessionTab],
+    session_id: &str,
+    input: &str,
+) -> AppResult<String> {
     let session = find_session_mut(sessions, session_id)?;
 
     session.last_output = format!(
@@ -83,7 +93,11 @@ pub fn append_simulated_input(sessions: &mut [SessionTab], session_id: &str, inp
 }
 
 /// Appends terminal output to an existing session buffer.
-pub fn append_session_output(sessions: &mut [SessionTab], session_id: &str, chunk: &str) -> AppResult<()> {
+pub fn append_session_output(
+    sessions: &mut [SessionTab],
+    session_id: &str,
+    chunk: &str,
+) -> AppResult<()> {
     let session = find_session_mut(sessions, session_id)?;
     session.last_output.push_str(chunk);
     session.updated_at = now_millis();
@@ -158,10 +172,7 @@ pub fn resize_session(
     rows: u16,
 ) -> AppResult<String> {
     if cols == 0 || rows == 0 {
-        return Err(AppError::new(
-            "invalid_terminal_size",
-            "终端尺寸必须大于 0",
-        ));
+        return Err(AppError::new("invalid_terminal_size", "终端尺寸必须大于 0"));
     }
 
     let session = find_session_mut(sessions, session_id)?;
@@ -191,7 +202,10 @@ fn ensure_session_exists(sessions: &[SessionTab], session_id: &str) -> AppResult
         .ok_or_else(|| AppError::new("session_not_found", session_id.to_string()))
 }
 
-fn find_session_mut<'a>(sessions: &'a mut [SessionTab], session_id: &str) -> AppResult<&'a mut SessionTab> {
+fn find_session_mut<'a>(
+    sessions: &'a mut [SessionTab],
+    session_id: &str,
+) -> AppResult<&'a mut SessionTab> {
     sessions
         .iter_mut()
         .find(|session| session.id == session_id)
@@ -216,9 +230,10 @@ fn now_millis() -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        append_session_output, append_simulated_input, clear_session_output, close_other_sessions,
-        next_session_title, open_connected_session, open_simulated_session, reconnect_session, resize_session,
-        set_session_status, DEFAULT_TERMINAL_COLS, DEFAULT_TERMINAL_ROWS,
+        DEFAULT_TERMINAL_COLS, DEFAULT_TERMINAL_ROWS, append_session_output,
+        append_simulated_input, clear_session_output, close_other_sessions, next_session_title,
+        open_connected_session, open_simulated_session, reconnect_session, resize_session,
+        set_session_status,
     };
     use crate::models::ConnectionProfile;
 
@@ -254,8 +269,8 @@ mod tests {
         let mut sessions = vec![open_simulated_session(&connection())];
         let session_id = sessions[0].id.clone();
 
-        let title =
-            append_simulated_input(&mut sessions, &session_id, "ls -la").expect("input should succeed");
+        let title = append_simulated_input(&mut sessions, &session_id, "ls -la")
+            .expect("input should succeed");
 
         assert_eq!(title, "测试主机");
         assert!(sessions[0].last_output.contains("$ ls -la"));
@@ -263,7 +278,8 @@ mod tests {
 
     #[test]
     fn open_connected_session_supports_custom_initial_output() {
-        let session = open_connected_session(&connection(), "测试主机".into(), "ready".into(), 80, 24);
+        let session =
+            open_connected_session(&connection(), "测试主机".into(), "ready".into(), 80, 24);
 
         assert_eq!(session.last_output, "ready");
         assert_eq!(session.terminal_cols, 80);
@@ -286,7 +302,8 @@ mod tests {
         let mut sessions = vec![open_simulated_session(&connection())];
         let session_id = sessions[0].id.clone();
 
-        append_session_output(&mut sessions, &session_id, "\r\nhello").expect("append should succeed");
+        append_session_output(&mut sessions, &session_id, "\r\nhello")
+            .expect("append should succeed");
 
         assert!(sessions[0].last_output.ends_with("\r\nhello"));
     }
@@ -296,8 +313,13 @@ mod tests {
         let mut sessions = vec![open_simulated_session(&connection())];
         let session_id = sessions[0].id.clone();
 
-        let title = set_session_status(&mut sessions, &session_id, "disconnected", Some("连接已断开"))
-            .expect("status update should succeed");
+        let title = set_session_status(
+            &mut sessions,
+            &session_id,
+            "disconnected",
+            Some("连接已断开"),
+        )
+        .expect("status update should succeed");
 
         assert_eq!(title, "测试主机");
         assert_eq!(sessions[0].status, "disconnected");
@@ -309,7 +331,8 @@ mod tests {
         let mut sessions = vec![open_simulated_session(&connection())];
         let session_id = sessions[0].id.clone();
 
-        reconnect_session(&mut sessions, &session_id, &connection()).expect("reconnect should succeed");
+        reconnect_session(&mut sessions, &session_id, &connection())
+            .expect("reconnect should succeed");
 
         assert!(sessions[0].last_output.contains("已重新连接"));
     }
@@ -336,7 +359,8 @@ mod tests {
         ];
         let keep_id = sessions[0].id.clone();
 
-        let removed = close_other_sessions(&mut sessions, &keep_id).expect("close others should succeed");
+        let removed =
+            close_other_sessions(&mut sessions, &keep_id).expect("close others should succeed");
 
         assert_eq!(removed, 1);
         assert_eq!(sessions.len(), 1);
@@ -369,7 +393,8 @@ mod tests {
         let mut sessions = vec![open_simulated_session(&connection())];
         let session_id = sessions[0].id.clone();
 
-        let error = resize_session(&mut sessions, &session_id, 0, 48).expect_err("resize should fail");
+        let error =
+            resize_session(&mut sessions, &session_id, 0, 48).expect_err("resize should fail");
 
         assert_eq!(error.code, "invalid_terminal_size");
     }

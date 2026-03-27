@@ -53,6 +53,14 @@ fn default_bottom_pane_height() -> u16 {
     DEFAULT_BOTTOM_PANE_HEIGHT
 }
 
+fn default_terminal_split_direction() -> String {
+    "none".into()
+}
+
+fn default_active_terminal_pane() -> String {
+    "primary".into()
+}
+
 fn normalize_theme_id(value: &str) -> &'static str {
     match value {
         "midnight" => "midnight",
@@ -70,6 +78,21 @@ fn normalize_bottom_panel_id(value: &str) -> &'static str {
         "history" => "history",
         "logs" => "logs",
         _ => DEFAULT_BOTTOM_PANEL_ID,
+    }
+}
+
+fn normalize_terminal_split_direction(value: &str) -> &'static str {
+    match value {
+        "horizontal" => "horizontal",
+        "vertical" => "vertical",
+        _ => "none",
+    }
+}
+
+fn normalize_terminal_pane_id(value: &str) -> &'static str {
+    match value {
+        "secondary" => "secondary",
+        _ => "primary",
     }
 }
 
@@ -305,6 +328,10 @@ pub struct WorkspaceLayout {
     pub bottom_pane_visible: bool,
     #[serde(default = "default_bottom_pane_height")]
     pub bottom_pane_height: u16,
+    #[serde(default = "default_terminal_split_direction")]
+    pub terminal_split_direction: String,
+    #[serde(default = "default_active_terminal_pane")]
+    pub active_terminal_pane: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -320,14 +347,14 @@ struct WorkspaceLayoutWire {
     bottom_panel: Option<String>,
     #[serde(default)]
     bottom_pane_visible: Option<bool>,
-    #[serde(
-        default,
-        alias = "bottomPanelVisible",
-        alias = "rightPanelVisible"
-    )]
+    #[serde(default, alias = "bottomPanelVisible", alias = "rightPanelVisible")]
     bottom_panel_visible: Option<bool>,
     #[serde(default)]
     bottom_pane_height: Option<u16>,
+    #[serde(default)]
+    terminal_split_direction: Option<String>,
+    #[serde(default)]
+    active_terminal_pane: Option<String>,
     #[serde(default)]
     sidebar_collapsed: Option<bool>,
 }
@@ -340,6 +367,8 @@ impl Default for WorkspaceLayout {
             bottom_pane: default_bottom_panel(),
             bottom_pane_visible: default_bottom_pane_visible(),
             bottom_pane_height: default_bottom_pane_height(),
+            terminal_split_direction: default_terminal_split_direction(),
+            active_terminal_pane: default_active_terminal_pane(),
         }
     }
 }
@@ -370,6 +399,12 @@ impl<'de> Deserialize<'de> for WorkspaceLayout {
                 wire.bottom_pane_height
                     .unwrap_or_else(default_bottom_pane_height),
             ),
+            terminal_split_direction: wire
+                .terminal_split_direction
+                .unwrap_or_else(default_terminal_split_direction),
+            active_terminal_pane: wire
+                .active_terminal_pane
+                .unwrap_or_else(default_active_terminal_pane),
         }
         .normalize())
     }
@@ -380,6 +415,10 @@ impl WorkspaceLayout {
         self.left_pane_width = clamp_left_pane_width(self.left_pane_width);
         self.bottom_pane = normalize_bottom_panel_id(self.bottom_pane.trim()).into();
         self.bottom_pane_height = clamp_bottom_pane_height(self.bottom_pane_height);
+        self.terminal_split_direction =
+            normalize_terminal_split_direction(self.terminal_split_direction.trim()).into();
+        self.active_terminal_pane =
+            normalize_terminal_pane_id(self.active_terminal_pane.trim()).into();
         self
     }
 }
@@ -438,6 +477,7 @@ pub struct BootstrapState {
     pub extensions: Vec<ExtensionContribution>,
     pub activity: Vec<ActivityEntry>,
     pub transfers: Vec<TransferTask>,
+    pub trusted_hosts: Vec<TrustedHost>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

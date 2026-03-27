@@ -14,7 +14,12 @@ pub fn validate_profile(
     let duplicate_connection_id = find_duplicate_profile_id(&normalized_profile, existing_profiles);
     let warnings = duplicate_connection_id
         .as_ref()
-        .map(|duplicate_id| vec![format!("检测到重复连接配置，可复用现有配置：{}。", duplicate_id)])
+        .map(|duplicate_id| {
+            vec![format!(
+                "检测到重复连接配置，可复用现有配置：{}。",
+                duplicate_id
+            )]
+        })
         .unwrap_or_default();
 
     Ok(ConnectionValidationResult {
@@ -100,15 +105,24 @@ fn normalize_profile(mut profile: ConnectionProfile) -> AppResult<ConnectionProf
     }
 
     if profile.username.is_empty() {
-        return Err(AppError::new("invalid_connection_username", "用户名不能为空"));
+        return Err(AppError::new(
+            "invalid_connection_username",
+            "用户名不能为空",
+        ));
     }
 
     if profile.port == 0 {
-        return Err(AppError::new("invalid_connection_port", "端口必须在 1 到 65535 之间"));
+        return Err(AppError::new(
+            "invalid_connection_port",
+            "端口必须在 1 到 65535 之间",
+        ));
     }
 
     if profile.auth_type == "password" && profile.password.trim().is_empty() {
-        return Err(AppError::new("invalid_connection_password", "密码认证需要填写密码"));
+        return Err(AppError::new(
+            "invalid_connection_password",
+            "密码认证需要填写密码",
+        ));
     }
 
     if profile.auth_type == "privateKey" && profile.private_key_path.is_empty() {
@@ -124,7 +138,9 @@ fn normalize_profile(mut profile: ConnectionProfile) -> AppResult<ConnectionProf
 fn normalize_auth_type(value: &str) -> String {
     let normalized = value.trim();
 
-    if normalized.eq_ignore_ascii_case("privatekey") || normalized.eq_ignore_ascii_case("private_key") {
+    if normalized.eq_ignore_ascii_case("privatekey")
+        || normalized.eq_ignore_ascii_case("private_key")
+    {
         "privateKey".into()
     } else if normalized.eq_ignore_ascii_case("password") {
         "password".into()
@@ -171,7 +187,9 @@ fn find_duplicate_profile_id(
 ) -> Option<String> {
     existing_profiles
         .iter()
-        .find(|existing| existing.id != profile.id && profile_signature(existing) == profile_signature(profile))
+        .find(|existing| {
+            existing.id != profile.id && profile_signature(existing) == profile_signature(profile)
+        })
         .map(|existing| existing.id.clone())
 }
 
@@ -192,14 +210,18 @@ fn parse_import_payload(payload: &str) -> AppResult<Vec<ConnectionProfile>> {
     }
 
     serde_json::from_str::<Vec<ConnectionProfile>>(payload)
-        .or_else(|_| serde_json::from_str::<ConnectionImportEnvelope>(payload).map(|envelope| envelope.connections))
+        .or_else(|_| {
+            serde_json::from_str::<ConnectionImportEnvelope>(payload)
+                .map(|envelope| envelope.connections)
+        })
         .map_err(|error| AppError::new("invalid_connection_import", error.to_string()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        export_profiles_json, import_profiles_json, normalize_profile, simulate_connection_test, validate_profile,
+        export_profiles_json, import_profiles_json, normalize_profile, simulate_connection_test,
+        validate_profile,
     };
     use crate::models::ConnectionProfile;
 
@@ -241,14 +263,18 @@ mod tests {
         let mut invalid = sample_profile();
         invalid.name = " ".into();
         assert_eq!(
-            normalize_profile(invalid).expect_err("name should fail").code,
+            normalize_profile(invalid)
+                .expect_err("name should fail")
+                .code,
             "invalid_connection_name"
         );
 
         let mut invalid = sample_profile();
         invalid.host = "".into();
         assert_eq!(
-            normalize_profile(invalid).expect_err("host should fail").code,
+            normalize_profile(invalid)
+                .expect_err("host should fail")
+                .code,
             "invalid_connection_host"
         );
 
@@ -264,7 +290,9 @@ mod tests {
         let mut invalid = sample_profile();
         invalid.port = 0;
         assert_eq!(
-            normalize_profile(invalid).expect_err("port should fail").code,
+            normalize_profile(invalid)
+                .expect_err("port should fail")
+                .code,
             "invalid_connection_port"
         );
 
@@ -307,9 +335,13 @@ mod tests {
             last_connected_at: None,
         }];
 
-        let validation = validate_profile(sample_profile(), &existing).expect("validation should pass");
+        let validation =
+            validate_profile(sample_profile(), &existing).expect("validation should pass");
 
-        assert_eq!(validation.duplicate_connection_id.as_deref(), Some("conn-existing"));
+        assert_eq!(
+            validation.duplicate_connection_id.as_deref(),
+            Some("conn-existing")
+        );
         assert_eq!(validation.warnings.len(), 1);
         assert!(validation.warnings[0].contains("重复连接配置"));
     }
@@ -324,7 +356,8 @@ mod tests {
 
     #[test]
     fn import_profiles_accepts_array_payload_and_tracks_replacements() {
-        let payload = serde_json::to_string(&vec![sample_profile()]).expect("payload should serialize");
+        let payload =
+            serde_json::to_string(&vec![sample_profile()]).expect("payload should serialize");
         let existing = vec![ConnectionProfile {
             id: "conn-existing".into(),
             name: "旧主机".into(),

@@ -15,6 +15,8 @@ export const defaultAppSettings: AppSettings = {
     bottomPane: "files",
     bottomPaneVisible: false,
     bottomPaneHeight: 180,
+    terminalSplitDirection: "none",
+    activeTerminalPane: "primary",
   },
 };
 

@@ -5,9 +5,7 @@ use std::{
 };
 
 use russh::{
-    ChannelReadHalf, ChannelWriteHalf,
-    Disconnect,
-    client,
+    ChannelReadHalf, ChannelWriteHalf, Disconnect, client,
     keys::{
         PrivateKey, PrivateKeyWithHashAlg,
         ssh_key::{HashAlg, PublicKey},
@@ -68,12 +66,8 @@ pub struct PreparedSshConnection {
 /// The credential payload resolved into the form expected by the SSH adapter.
 #[derive(Debug)]
 pub enum PreparedSshAuth {
-    Password {
-        password: String,
-    },
-    PrivateKey {
-        private_key: Arc<PrivateKey>,
-    },
+    Password { password: String },
+    PrivateKey { private_key: Arc<PrivateKey> },
 }
 
 /// An opened interactive shell session ready for runtime IO bridging.
@@ -140,9 +134,9 @@ impl client::Handler for TermoraXClientHandler {
 
         let accepted = match &self.verification_mode {
             HostKeyVerificationMode::AcceptAny => true,
-            HostKeyVerificationMode::RequireFingerprint { expected_fingerprint } => {
-                inspected.fingerprint == *expected_fingerprint
-            }
+            HostKeyVerificationMode::RequireFingerprint {
+                expected_fingerprint,
+            } => inspected.fingerprint == *expected_fingerprint,
         };
 
         Ok(accepted)
@@ -250,7 +244,10 @@ impl RusshSshService {
     }
 
     /// Connects far enough to capture the remote host key without authenticating or opening a shell.
-    pub async fn inspect_host(&self, profile: &ConnectionProfile) -> AppResult<InspectedSshHostKey> {
+    pub async fn inspect_host(
+        &self,
+        profile: &ConnectionProfile,
+    ) -> AppResult<InspectedSshHostKey> {
         let plan = self.build_connect_plan(profile)?;
         let client_config = self.build_client_config(&plan);
         let timeout = Duration::from_secs(plan.connect_timeout_secs);
@@ -293,10 +290,7 @@ impl RusshSshService {
         rows: u16,
     ) -> AppResult<OpenedSshShell> {
         if cols == 0 || rows == 0 {
-            return Err(AppError::new(
-                "invalid_terminal_size",
-                "终端尺寸必须大于 0",
-            ));
+            return Err(AppError::new("invalid_terminal_size", "终端尺寸必须大于 0"));
         }
 
         let prepared = self.prepare_connection_from_profile(profile)?;
@@ -320,7 +314,10 @@ impl RusshSshService {
         .map_err(|error| {
             if let Some(inspected_host_key) = read_observed_host_key(&observed_host_key) {
                 if inspected_host_key.fingerprint != trusted_host.fingerprint {
-                    return build_host_fingerprint_mismatch_error(trusted_host, &inspected_host_key);
+                    return build_host_fingerprint_mismatch_error(
+                        trusted_host,
+                        &inspected_host_key,
+                    );
                 }
             }
 
@@ -375,10 +372,7 @@ impl RusshSshService {
         rows: u16,
     ) -> AppResult<()> {
         if cols == 0 || rows == 0 {
-            return Err(AppError::new(
-                "invalid_terminal_size",
-                "终端尺寸必须大于 0",
-            ));
+            return Err(AppError::new("invalid_terminal_size", "终端尺寸必须大于 0"));
         }
 
         writer
@@ -403,7 +397,11 @@ impl RusshSshService {
 
         tokio::time::timeout(
             close_timeout,
-            connection.disconnect(Disconnect::ByApplication, "Closing TermoraX session", "en-US"),
+            connection.disconnect(
+                Disconnect::ByApplication,
+                "Closing TermoraX session",
+                "en-US",
+            ),
         )
         .await
         .map_err(|_| AppError::new("ssh_disconnect_timeout", "断开 SSH 连接超时"))?
@@ -431,7 +429,9 @@ impl RusshSshService {
                 let hash = connection
                     .best_supported_rsa_hash()
                     .await
-                    .map_err(|error| classify_ssh_error("ssh_auth_failed", "读取服务器密钥算法失败", error))?
+                    .map_err(|error| {
+                        classify_ssh_error("ssh_auth_failed", "读取服务器密钥算法失败", error)
+                    })?
                     .flatten();
 
                 tokio::time::timeout(
@@ -518,7 +518,9 @@ fn parse_auth_method(value: &str) -> AppResult<SshAuthMethod> {
         return Ok(SshAuthMethod::Password);
     }
 
-    if normalized.eq_ignore_ascii_case("privatekey") || normalized.eq_ignore_ascii_case("private_key") {
+    if normalized.eq_ignore_ascii_case("privatekey")
+        || normalized.eq_ignore_ascii_case("private_key")
+    {
         return Ok(SshAuthMethod::PrivateKey);
     }
 
@@ -566,7 +568,11 @@ fn classify_transport_error_code(message: &str) -> &'static str {
     "ssh_transport_error"
 }
 
-fn classify_ssh_error(default_code: &'static str, fallback_message: &'static str, error: russh::Error) -> AppError {
+fn classify_ssh_error(
+    default_code: &'static str,
+    fallback_message: &'static str,
+    error: russh::Error,
+) -> AppError {
     let message = error.to_string();
     let code = match classify_transport_error_code(&message) {
         "ssh_transport_error" => default_code,
@@ -581,8 +587,9 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        InspectedSshHostKey, PreparedSshAuth, SshCredentials, build_host_fingerprint_mismatch_error,
-        classify_transport_error_code, default_ssh_service, inspect_public_key,
+        InspectedSshHostKey, PreparedSshAuth, SshCredentials,
+        build_host_fingerprint_mismatch_error, classify_transport_error_code, default_ssh_service,
+        inspect_public_key,
     };
     use crate::models::{ConnectionProfile, TrustedHost};
     use russh::keys::ssh_key::PublicKey;
@@ -635,7 +642,10 @@ mod tests {
 
     #[test]
     fn close_timeout_is_short_for_ui_safe_cleanup() {
-        assert_eq!(Duration::from_secs(super::DEFAULT_CLOSE_TIMEOUT_SECS), Duration::from_secs(2));
+        assert_eq!(
+            Duration::from_secs(super::DEFAULT_CLOSE_TIMEOUT_SECS),
+            Duration::from_secs(2)
+        );
     }
 
     #[test]
@@ -699,11 +709,26 @@ mod tests {
 
     #[test]
     fn classify_transport_error_maps_common_cases() {
-        assert_eq!(classify_transport_error_code("connection timed out"), "ssh_connect_timeout");
-        assert_eq!(classify_transport_error_code("connection refused"), "ssh_connection_refused");
-        assert_eq!(classify_transport_error_code("permission denied"), "ssh_auth_failed");
-        assert_eq!(classify_transport_error_code("broken pipe"), "ssh_disconnected");
-        assert_eq!(classify_transport_error_code("unexpected packet"), "ssh_transport_error");
+        assert_eq!(
+            classify_transport_error_code("connection timed out"),
+            "ssh_connect_timeout"
+        );
+        assert_eq!(
+            classify_transport_error_code("connection refused"),
+            "ssh_connection_refused"
+        );
+        assert_eq!(
+            classify_transport_error_code("permission denied"),
+            "ssh_auth_failed"
+        );
+        assert_eq!(
+            classify_transport_error_code("broken pipe"),
+            "ssh_disconnected"
+        );
+        assert_eq!(
+            classify_transport_error_code("unexpected packet"),
+            "ssh_transport_error"
+        );
     }
 
     #[test]

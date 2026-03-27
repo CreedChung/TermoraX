@@ -12,6 +12,7 @@ import type {
   RemoteDirectoryListing,
   RemoteFileEntry,
   SessionEvent,
+  TrustedHost,
   TransferTask,
 } from "../../entities/domain";
 import { defaultAppSettings, starterConnections, starterSnippets } from "../../features/settings/model/defaults";
@@ -22,7 +23,7 @@ import {
 } from "../../shared/lib/connections";
 import { createId } from "../../shared/lib/id";
 import { getLocaleState, t } from "../../shared/i18n";
-import { listenSessionEvents } from "./sessionEvents";
+import { listenSessionEvents, listenTransferEvents } from "./sessionEvents";
 
 declare global {
   interface Window {
@@ -75,13 +76,8 @@ let mockState: BootstrapState = {
     },
   ],
   transfers: [],
+  trustedHosts: [],
 };
-
-const mockTrustedHosts: Record<string, string> = {};
-
-function hostKeyCacheKey(connection: ConnectionProfile): string {
-  return `${connection.host}:${connection.port}`;
-}
 
 function mockFingerprintForConnection(connection: ConnectionProfile): string {
   const normalizedId = connection.id.replace(/[^a-zA-Z0-9]/g, "");
@@ -96,7 +92,11 @@ function buildMockInspection(connectionId: string): HostFingerprintInspection {
   }
 
   const fingerprint = mockFingerprintForConnection(connection);
-  const trustedFingerprint = mockTrustedHosts[hostKeyCacheKey(connection)] ?? null;
+  const trustedHost =
+    mockState.trustedHosts.find(
+      (item) => item.host === connection.host && item.port === connection.port,
+    ) ?? null;
+  const trustedFingerprint = trustedHost?.fingerprint ?? null;
   let trustStatus: HostTrustStatus = "untrusted";
 
   if (trustedFingerprint) {
@@ -398,26 +398,39 @@ function sanitizeImportedProfiles(content: string) {
 }
 
 function createTransferTask(
+  sessionId: string,
   direction: "upload" | "download",
   localPath: string,
   remotePath: string,
   bytesTotal: number,
   bytesTransferred: number,
+  status: TransferTask["status"] = "succeeded",
+  message: string | null = null,
 ): TransferTask {
   const now = new Date().toISOString();
 
   return {
     id: createId("transfer"),
-    sessionId: mockState.sessions[0]?.id ?? "",
+    sessionId,
     direction,
-    status: "succeeded",
+    status,
     localPath,
     remotePath,
     bytesTotal,
     bytesTransferred,
     startedAt: now,
-    finishedAt: now,
-    message: null,
+    finishedAt: status === "running" || status === "canceling" ? null : now,
+    message,
+  };
+}
+
+function upsertTrustedHost(nextHost: TrustedHost) {
+  const existing = mockState.trustedHosts.filter(
+    (item) => !(item.host === nextHost.host && item.port === nextHost.port),
+  );
+  mockState = {
+    ...mockState,
+    trustedHosts: [nextHost, ...existing],
   };
 }
 
@@ -638,7 +651,13 @@ async function callOrMock<T>(command: string, args?: Record<string, unknown>): P
         throw new Error("未找到连接配置");
       }
 
-      mockTrustedHosts[hostKeyCacheKey(connection)] = fingerprint;
+      upsertTrustedHost({
+        host: connection.host,
+        port: connection.port,
+        algorithm: inspection.algorithm,
+        fingerprint,
+        trustedAt: new Date().toISOString(),
+      });
 
       return {
         ...inspection,
@@ -747,7 +766,12 @@ async function callOrMock<T>(command: string, args?: Record<string, unknown>): P
       if (!snippet) {
         throw new Error(t("errors.snippetNotFound"));
       }
-      return callOrMock<T>("send_session_input", { sessionId, input: snippet.command });
+      return callOrMock<T>("send_session_input", {
+        sessionId,
+        input: snippet.command.endsWith("\n") || snippet.command.endsWith("\r")
+          ? snippet.command
+          : `${snippet.command}\n`,
+      });
     }
     case "list_remote_entries": {
       const sessionId = args?.sessionId as string;
@@ -789,6 +813,7 @@ async function callOrMock<T>(command: string, args?: Record<string, unknown>): P
       return callOrMock<T>("navigate_remote_directory", { sessionId, path: nextPath });
     }
     case "upload_file_to_remote": {
+      const sessionId = String(args?.sessionId ?? "");
       const localPath = String(args?.localPath ?? "");
       const remotePath = String(args?.remotePath ?? "");
       const directory = parentRemotePath(remotePath);
@@ -809,7 +834,7 @@ async function callOrMock<T>(command: string, args?: Record<string, unknown>): P
       mockState = {
         ...mockState,
         transfers: [
-          createTransferTask("upload", localPath, remotePath, 2048, 2048),
+          createTransferTask(sessionId, "upload", localPath, remotePath, 2048, 2048),
           ...mockState.transfers,
         ].slice(0, 50),
       };
@@ -817,12 +842,13 @@ async function callOrMock<T>(command: string, args?: Record<string, unknown>): P
       return cloneState() as T;
     }
     case "download_file_from_remote": {
+      const sessionId = String(args?.sessionId ?? "");
       const remotePath = String(args?.remotePath ?? "");
       const localPath = String(args?.localPath ?? "");
       mockState = {
         ...mockState,
         transfers: [
-          createTransferTask("download", localPath, remotePath, 2048, 2048),
+          createTransferTask(sessionId, "download", localPath, remotePath, 2048, 2048),
           ...mockState.transfers,
         ].slice(0, 50),
       };
@@ -889,14 +915,53 @@ async function callOrMock<T>(command: string, args?: Record<string, unknown>): P
       recordActivity(`已重试传输任务 ${taskId}`);
       return cloneState() as T;
     }
+    case "cancel_transfer_task": {
+      const taskId = String(args?.taskId ?? "");
+      const task = mockState.transfers.find((item) => item.id === taskId);
+      if (!task) {
+        throw new Error("未找到传输任务");
+      }
+      if (task.status !== "running" && task.status !== "canceling") {
+        throw new Error("只有进行中的传输任务才支持取消");
+      }
+      mockState = {
+        ...mockState,
+        transfers: mockState.transfers.map((item) =>
+          item.id === taskId
+            ? {
+                ...item,
+                status: "canceled",
+                finishedAt: new Date().toISOString(),
+                message: "已取消",
+              }
+            : item,
+        ),
+      };
+      recordActivity(`已取消传输任务 ${taskId}`);
+      return cloneState() as T;
+    }
     case "clear_completed_transfer_tasks": {
       const taskCount = mockState.transfers.length;
       mockState = {
         ...mockState,
-        transfers: mockState.transfers.filter((task) => task.status === "running"),
+        transfers: mockState.transfers.filter(
+          (task) => task.status === "running" || task.status === "canceling",
+        ),
       };
       const cleared = taskCount - mockState.transfers.length;
       recordActivity(`已清理 ${cleared} 个完成任务`);
+      return cloneState() as T;
+    }
+    case "delete_trusted_host": {
+      const host = String(args?.host ?? "");
+      const port = Number(args?.port ?? 22);
+      mockState = {
+        ...mockState,
+        trustedHosts: mockState.trustedHosts.filter(
+          (item) => !(item.host === host && item.port === port),
+        ),
+      };
+      recordActivity(`已移除已信任主机 ${host}:${port}`);
       return cloneState() as T;
     }
     default:
@@ -1010,14 +1075,26 @@ export const desktopClient = {
   retryTransferTask(taskId: string) {
     return callOrMock<BootstrapState>("retry_transfer_task", { taskId });
   },
+  cancelTransferTask(taskId: string) {
+    return callOrMock<BootstrapState>("cancel_transfer_task", { taskId });
+  },
   clearCompletedTransferTasks() {
     return callOrMock<BootstrapState>("clear_completed_transfer_tasks");
+  },
+  deleteTrustedHost(host: string, port: number) {
+    return callOrMock<BootstrapState>("delete_trusted_host", { host, port });
   },
   subscribeSessionEvents(listener: (event: SessionEvent) => void) {
     if (!isTauriRuntime()) {
       return Promise.resolve(() => {});
     }
     return listenSessionEvents(listener);
+  },
+  subscribeTransferEvents(listener: (task: TransferTask) => void) {
+    if (!isTauriRuntime()) {
+      return Promise.resolve(() => {});
+    }
+    return listenTransferEvents(listener);
   },
 };
 

@@ -15,8 +15,11 @@ import type {
   RemoteFileEntry,
   SessionEvent,
   SessionTab,
+  TerminalPaneId,
+  TerminalSplitDirection,
   ThemeId,
   TransferTask,
+  TrustedHost,
 } from "../entities/domain";
 import { desktopClient } from "../integrations/tauri/client";
 import { defaultAppSettings } from "../features/settings/model/defaults";
@@ -46,6 +49,8 @@ interface WorkspaceState extends BootstrapState {
   error: string | null;
   selectedConnectionId: string | null;
   activeSessionId: string | null;
+  primaryTerminalSessionId: string | null;
+  secondaryTerminalSessionId: string | null;
   commandHistory: CommandHistoryEntry[];
   remoteEntries: RemoteFileEntry[];
   remoteRootEntries: RemoteFileEntry[];
@@ -66,10 +71,13 @@ const initialState: WorkspaceState = {
   extensions: [],
   activity: [],
   transfers: [],
+  trustedHosts: [],
   isLoading: true,
   error: null,
   selectedConnectionId: null,
   activeSessionId: null,
+  primaryTerminalSessionId: null,
+  secondaryTerminalSessionId: null,
   commandHistory: [],
   remoteEntries: [],
   remoteRootEntries: [],
@@ -93,6 +101,86 @@ function previewOutput(value: string): string {
   return sanitized.length > SESSION_OUTPUT_PREVIEW_CHARS
     ? `${sanitized.slice(0, SESSION_OUTPUT_PREVIEW_CHARS)}...`
     : sanitized;
+}
+
+function pickSessionId(
+  sessions: SessionTab[],
+  preferredId: string | null | undefined,
+  excludeId?: string | null,
+): string | null {
+  if (preferredId && preferredId !== excludeId && sessions.some((session) => session.id === preferredId)) {
+    return preferredId;
+  }
+
+  return sessions.find((session) => session.id !== excludeId)?.id ?? null;
+}
+
+function resolveTerminalPaneSessions(input: {
+  sessions: SessionTab[];
+  splitDirection: TerminalSplitDirection;
+  activeSessionId: string | null;
+  currentPrimarySessionId: string | null;
+  currentSecondarySessionId: string | null;
+}): { primaryTerminalSessionId: string | null; secondaryTerminalSessionId: string | null } {
+  const primaryTerminalSessionId =
+    pickSessionId(input.sessions, input.currentPrimarySessionId ?? input.activeSessionId) ?? input.activeSessionId;
+
+  if (input.splitDirection === "none") {
+    return {
+      primaryTerminalSessionId,
+      secondaryTerminalSessionId: null,
+    };
+  }
+
+  return {
+    primaryTerminalSessionId,
+    secondaryTerminalSessionId:
+      pickSessionId(input.sessions, input.currentSecondarySessionId, primaryTerminalSessionId) ??
+      pickSessionId(input.sessions, input.activeSessionId, primaryTerminalSessionId),
+  };
+}
+
+function getPaneSessionId(state: WorkspaceState, paneId: TerminalPaneId): string | null {
+  return paneId === "secondary" ? state.secondaryTerminalSessionId : state.primaryTerminalSessionId;
+}
+
+function assignSessionToPane(
+  state: WorkspaceState,
+  paneId: TerminalPaneId,
+  sessionId: string,
+): Pick<WorkspaceState, "primaryTerminalSessionId" | "secondaryTerminalSessionId" | "activeSessionId"> {
+  const primaryTerminalSessionId = state.primaryTerminalSessionId;
+  const secondaryTerminalSessionId = state.secondaryTerminalSessionId;
+
+  if (paneId === "primary") {
+    if (secondaryTerminalSessionId === sessionId) {
+      return {
+        primaryTerminalSessionId: sessionId,
+        secondaryTerminalSessionId: primaryTerminalSessionId,
+        activeSessionId: sessionId,
+      };
+    }
+
+    return {
+      primaryTerminalSessionId: sessionId,
+      secondaryTerminalSessionId,
+      activeSessionId: sessionId,
+    };
+  }
+
+  if (primaryTerminalSessionId === sessionId) {
+    return {
+      primaryTerminalSessionId: secondaryTerminalSessionId,
+      secondaryTerminalSessionId: sessionId,
+      activeSessionId: sessionId,
+    };
+  }
+
+  return {
+    primaryTerminalSessionId,
+    secondaryTerminalSessionId: sessionId,
+    activeSessionId: sessionId,
+  };
 }
 
 function deriveNextSelection(snapshot: BootstrapState, currentConnectionId: string | null, currentSessionId: string | null) {
@@ -194,6 +282,16 @@ export function updateSessionTerminalSize(
   });
 
   return mutated ? updated : sessions;
+}
+
+export function upsertTransferTask(tasks: TransferTask[], nextTask: TransferTask): TransferTask[] {
+  const existingIndex = tasks.findIndex((task) => task.id === nextTask.id);
+
+  if (existingIndex === -1) {
+    return [nextTask, ...tasks].slice(0, 50);
+  }
+
+  return tasks.map((task) => (task.id === nextTask.id ? nextTask : task));
 }
 
 export function collectCommandHistoryEntries(currentDraft: string, input: string): {
@@ -439,11 +537,29 @@ export function useWorkspaceApp() {
           ...normalizedSnapshot,
           sessions: mergeSnapshotSessions(current.sessions, normalizedSnapshot.sessions),
         };
+        const nextSelection = deriveNextSelection(
+          mergedSnapshot,
+          current.selectedConnectionId,
+          current.activeSessionId,
+        );
+        const nextPaneSessions = resolveTerminalPaneSessions({
+          sessions: mergedSnapshot.sessions,
+          splitDirection: mergedSnapshot.settings.workspace.terminalSplitDirection,
+          activeSessionId: nextSelection.activeSessionId,
+          currentPrimarySessionId: current.primaryTerminalSessionId,
+          currentSecondarySessionId: current.secondaryTerminalSessionId,
+        });
+        const nextActiveSessionId =
+          mergedSnapshot.settings.workspace.activeTerminalPane === "secondary"
+            ? nextPaneSessions.secondaryTerminalSessionId ?? nextPaneSessions.primaryTerminalSessionId
+            : nextPaneSessions.primaryTerminalSessionId ?? nextSelection.activeSessionId;
 
         return {
           ...current,
           ...mergedSnapshot,
-          ...deriveNextSelection(mergedSnapshot, current.selectedConnectionId, current.activeSessionId),
+          ...nextSelection,
+          ...nextPaneSessions,
+          activeSessionId: nextActiveSessionId,
           pendingHostVerification: current.pendingHostVerification,
           lastHostInspection: current.lastHostInspection,
           isLoading: false,
@@ -619,6 +735,53 @@ export function useWorkspaceApp() {
     };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    let unsubscribe: (() => void) | null = null;
+
+    const listener = (task: TransferTask) => {
+      if (cancelled) {
+        return;
+      }
+
+      setState((current) => ({
+        ...current,
+        transfers: upsertTransferTask(current.transfers, task),
+      }));
+
+      const shouldRefreshRemoteEntries =
+        task.direction === "upload" &&
+        (task.status === "succeeded" || task.status === "failed" || task.status === "canceled") &&
+        state.activeSessionId === task.sessionId &&
+        activeSessionCurrentPath === parentRemotePath(task.remotePath);
+
+      if (shouldRefreshRemoteEntries) {
+        void refreshRemoteEntries(task.sessionId);
+      }
+    };
+
+    void desktopClient
+      .subscribeTransferEvents(listener)
+      .then((unlisten) => {
+        if (cancelled) {
+          void unlisten();
+          return;
+        }
+
+        unsubscribe = () => {
+          void unlisten();
+        };
+      })
+      .catch((error) => {
+        console.error("transfer event stream error", error);
+      });
+
+    return () => {
+      cancelled = true;
+      unsubscribe?.();
+    };
+  }, [activeSessionCurrentPath, refreshRemoteEntries, state.activeSessionId]);
+
   const selectedConnection = useMemo(
     () => state.connections.find((item) => item.id === state.selectedConnectionId) ?? null,
     [state.connections, state.selectedConnectionId],
@@ -637,7 +800,10 @@ export function useWorkspaceApp() {
       setState((current) => ({ ...current, selectedConnectionId: connectionId }));
     },
     selectSession(sessionId: string) {
-      setState((current) => ({ ...current, activeSessionId: sessionId }));
+      setState((current) => ({
+        ...current,
+        ...assignSessionToPane(current, current.settings.workspace.activeTerminalPane, sessionId),
+      }));
     },
     async saveConnectionProfile(input: Partial<ConnectionProfile>) {
       const { profile, validationErrors, duplicateWarning, isValid } = prepareConnectionProfile(input);
@@ -744,10 +910,12 @@ export function useWorkspaceApp() {
             snapshot.sessions.find((item) => item.connectionId === connectionId)?.id ?? snapshot.sessions[0]?.id ?? null;
           setState((current) => ({
             ...current,
+            ...(nextActiveSessionId
+              ? assignSessionToPane(current, current.settings.workspace.activeTerminalPane, nextActiveSessionId)
+              : {}),
             pendingHostVerification: null,
             lastHostInspection: inspection,
             selectedConnectionId: connectionId,
-            activeSessionId: nextActiveSessionId,
             connectionStatusMessage: buildHostInspectionMessage(inspection),
           }));
           return;
@@ -784,8 +952,10 @@ export function useWorkspaceApp() {
           snapshot.sessions.find((item) => item.connectionId === pending.connectionId)?.id ?? snapshot.sessions[0]?.id ?? null;
         setState((current) => ({
           ...current,
+          ...(nextActiveSessionId
+            ? assignSessionToPane(current, current.settings.workspace.activeTerminalPane, nextActiveSessionId)
+            : {}),
           selectedConnectionId: pending.connectionId,
-          activeSessionId: nextActiveSessionId,
           connectionStatusMessage: buildHostInspectionMessage(inspection),
         }));
       } catch (error) {
@@ -881,6 +1051,9 @@ export function useWorkspaceApp() {
     },
     async retryTransfer(task: TransferTask) {
       await runMutation(() => desktopClient.retryTransferTask(task.id));
+    },
+    async cancelTransfer(task: TransferTask) {
+      await runMutation(() => desktopClient.cancelTransferTask(task.id));
     },
     async clearCompletedTransfers() {
       await runMutation(() => desktopClient.clearCompletedTransferTasks());
@@ -988,6 +1161,107 @@ export function useWorkspaceApp() {
         return;
       }
       await runMutation(() => desktopClient.runSnippetOnSession(state.activeSessionId as string, snippetId));
+    },
+    async deleteTrustedHost(host: TrustedHost) {
+      await runMutation(() => desktopClient.deleteTrustedHost(host.host, host.port));
+    },
+    async splitTerminal(direction: Exclude<TerminalSplitDirection, "none">) {
+      if (!state.activeSessionId || !activeSession) {
+        return;
+      }
+
+      let secondarySessionId =
+        state.secondaryTerminalSessionId &&
+        state.secondaryTerminalSessionId !== state.primaryTerminalSessionId &&
+        state.sessions.some((session) => session.id === state.secondaryTerminalSessionId)
+          ? state.secondaryTerminalSessionId
+          : null;
+
+      if (!secondarySessionId) {
+        const snapshot = await desktopClient.openSession(activeSession.connectionId);
+        applySnapshot(snapshot);
+        secondarySessionId =
+          snapshot.sessions.find((session) => session.id !== state.activeSessionId)?.id ?? null;
+      }
+
+      if (!secondarySessionId) {
+        return;
+      }
+
+      setState((current) => ({
+        ...current,
+        primaryTerminalSessionId: current.primaryTerminalSessionId ?? current.activeSessionId,
+        secondaryTerminalSessionId: secondarySessionId,
+        activeSessionId: secondarySessionId,
+      }));
+
+      await runMutation(() =>
+        desktopClient.saveSettings({
+          ...state.settings,
+          workspace: {
+            ...state.settings.workspace,
+            terminalSplitDirection: direction,
+            activeTerminalPane: "secondary",
+          },
+        }),
+      );
+    },
+    async focusTerminalPane(paneId: TerminalPaneId) {
+      const sessionId = getPaneSessionId(state, paneId);
+      if (!sessionId) {
+        return;
+      }
+
+      setState((current) => ({
+        ...current,
+        activeSessionId: sessionId,
+      }));
+
+      await runMutation(() =>
+        desktopClient.saveSettings({
+          ...state.settings,
+          workspace: {
+            ...state.settings.workspace,
+            activeTerminalPane: paneId,
+          },
+        }),
+      );
+    },
+    async closeActiveTerminalPane() {
+      if (state.settings.workspace.terminalSplitDirection === "none") {
+        if (state.activeSessionId) {
+          await runMutation(() => desktopClient.closeSession(state.activeSessionId as string));
+        }
+        return;
+      }
+
+      const activePane = state.settings.workspace.activeTerminalPane;
+      const closingSessionId = getPaneSessionId(state, activePane);
+      if (!closingSessionId) {
+        return;
+      }
+
+      const nextPrimarySessionId =
+        activePane === "primary" ? state.secondaryTerminalSessionId : state.primaryTerminalSessionId;
+
+      setState((current) => ({
+        ...current,
+        primaryTerminalSessionId: nextPrimarySessionId,
+        secondaryTerminalSessionId: null,
+        activeSessionId: nextPrimarySessionId,
+      }));
+
+      await runMutation(() =>
+        desktopClient.saveSettings({
+          ...state.settings,
+          workspace: {
+            ...state.settings.workspace,
+            terminalSplitDirection: "none",
+            activeTerminalPane: "primary",
+          },
+        }),
+      );
+      await runMutation(() => desktopClient.closeSession(closingSessionId));
     },
     async saveSettings(settings: AppSettings) {
       await runMutation(() => desktopClient.saveSettings(normalizeAppSettings(settings)));

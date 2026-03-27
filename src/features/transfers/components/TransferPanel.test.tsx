@@ -44,6 +44,19 @@ const tasks: TransferTask[] = [
     finishedAt: "2026-01-01T12:02:05.000Z",
     message: "网络错误",
   },
+  {
+    id: "task-4",
+    sessionId: "session-1",
+    direction: "upload",
+    status: "canceling",
+    localPath: "C:/logs/huge.log",
+    remotePath: "/home/demo/huge.log",
+    bytesTotal: 8096,
+    bytesTransferred: 2048,
+    startedAt: "2026-01-01T12:03:00.000Z",
+    finishedAt: null,
+    message: "正在取消…",
+  },
 ];
 
 describe("TransferPanel", () => {
@@ -73,8 +86,11 @@ describe("TransferPanel", () => {
 
   it("shows retry button for failed tasks and clear completed action", async () => {
     const retry = vi.fn();
+    const cancel = vi.fn();
     const clearCompleted = vi.fn();
-    render(<TransferPanel tasks={tasks} onRetry={retry} onClearCompleted={clearCompleted} />);
+    render(
+      <TransferPanel tasks={tasks} onCancel={cancel} onRetry={retry} onClearCompleted={clearCompleted} />,
+    );
 
     expect(screen.getByRole("button", { name: "清理已完成" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "清理已完成" })).not.toBeDisabled();
@@ -86,5 +102,9 @@ describe("TransferPanel", () => {
     expect(retryButtons.length).toBeGreaterThan(0);
     await userEvent.click(retryButtons[0]);
     expect(retry).toHaveBeenCalledWith(expect.objectContaining({ id: "task-3" }));
+
+    await userEvent.click(screen.getByRole("button", { name: "取消" }));
+    expect(cancel).toHaveBeenCalledWith(expect.objectContaining({ id: "task-1" }));
+    expect(screen.getByRole("button", { name: "取消中" })).toBeDisabled();
   });
 });

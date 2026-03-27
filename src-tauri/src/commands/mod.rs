@@ -228,23 +228,25 @@ pub fn navigate_remote_to_parent(
 /// Uploads a local file into a remote target path.
 #[tauri::command]
 pub fn upload_file_to_remote(
+    app_handle: AppHandle,
     state: State<'_, AppState>,
     session_id: String,
     local_path: String,
     remote_path: String,
 ) -> AppResult<BootstrapState> {
-    state.upload_file_to_remote(&session_id, &local_path, &remote_path)
+    state.upload_file_to_remote(&app_handle, &session_id, &local_path, &remote_path)
 }
 
 /// Downloads a remote file into a local target path.
 #[tauri::command]
 pub fn download_file_from_remote(
+    app_handle: AppHandle,
     state: State<'_, AppState>,
     session_id: String,
     remote_path: String,
     local_path: String,
 ) -> AppResult<BootstrapState> {
-    state.download_file_from_remote(&session_id, &remote_path, &local_path)
+    state.download_file_from_remote(&app_handle, &session_id, &remote_path, &local_path)
 }
 
 /// Creates a remote directory inside the current SFTP workspace.
@@ -282,14 +284,34 @@ pub fn delete_remote_entry(
 /// Retries a previously failed transfer task.
 #[tauri::command]
 pub fn retry_transfer_task(
+    app_handle: AppHandle,
     state: State<'_, AppState>,
     task_id: String,
 ) -> AppResult<BootstrapState> {
-    state.retry_transfer_task(&task_id)
+    state.retry_transfer_task(&app_handle, &task_id)
+}
+
+/// Requests cancellation for a running transfer task.
+#[tauri::command]
+pub fn cancel_transfer_task(
+    state: State<'_, AppState>,
+    task_id: String,
+) -> AppResult<BootstrapState> {
+    state.cancel_transfer_task(&task_id)
 }
 
 /// Clears completed transfer tasks from the transfer center.
 #[tauri::command]
 pub fn clear_completed_transfer_tasks(state: State<'_, AppState>) -> AppResult<BootstrapState> {
     state.clear_completed_transfer_tasks()
+}
+
+/// Deletes a persisted trusted SSH host fingerprint entry.
+#[tauri::command]
+pub fn delete_trusted_host(
+    state: State<'_, AppState>,
+    host: String,
+    port: u16,
+) -> AppResult<BootstrapState> {
+    state.delete_trusted_host(&host, port)
 }

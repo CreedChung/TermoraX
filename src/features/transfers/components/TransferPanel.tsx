@@ -7,13 +7,16 @@ interface TransferPanelProps {
   tasks: TransferTask[];
   loading?: boolean;
   onRetry?: (task: TransferTask) => void;
+  onCancel?: (task: TransferTask) => void;
   onClearCompleted?: () => void;
 }
 
 const statusLabels = {
   running: t("transfers.status.running"),
+  canceling: t("transfers.status.canceling"),
   succeeded: t("transfers.status.succeeded"),
   failed: t("transfers.status.failed"),
+  canceled: t("transfers.status.canceled"),
 } satisfies Record<TransferTask["status"], string>;
 
 function getTransferProgress(task: TransferTask): number {
@@ -28,6 +31,7 @@ export const TransferPanel = memo(function TransferPanel({
   tasks,
   loading = false,
   onRetry,
+  onCancel,
   onClearCompleted,
 }: TransferPanelProps) {
   const summary = loading
@@ -35,7 +39,9 @@ export const TransferPanel = memo(function TransferPanel({
     : tasks.length > 0
       ? t("transfers.taskCount", { count: tasks.length })
       : t("transfers.empty");
-  const hasCompleted = tasks.some((task) => task.status === "succeeded" || task.status === "failed");
+  const hasCompleted = tasks.some(
+    (task) => task.status === "succeeded" || task.status === "failed" || task.status === "canceled",
+  );
 
   return (
     <section className="panel transfer-panel">
@@ -89,6 +95,17 @@ export const TransferPanel = memo(function TransferPanel({
                     {formatTimestamp(task.finishedAt ?? task.startedAt)}
                   </span>
                   {task.message ? <span>{task.message}</span> : null}
+                  {(task.status === "running" || task.status === "canceling") && onCancel ? (
+                    <button
+                      type="button"
+                      className="ghost-button transfer-row__action"
+                      onClick={() => onCancel(task)}
+                      disabled={loading || task.status === "canceling"}
+                      aria-disabled={loading || task.status === "canceling"}
+                    >
+                      {task.status === "canceling" ? t("transfers.canceling") : t("transfers.cancel")}
+                    </button>
+                  ) : null}
                   {task.status === "failed" && onRetry ? (
                     <button
                       type="button"

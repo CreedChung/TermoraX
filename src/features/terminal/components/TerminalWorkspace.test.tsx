@@ -182,10 +182,13 @@ function buildState(session: SessionTab | null): WorkspaceViewState {
     extensions: [],
     activity: [],
     transfers: [],
+    trustedHosts: [],
     isLoading: false,
     error: null,
     selectedConnectionId: null,
     activeSessionId: session?.id ?? null,
+    primaryTerminalSessionId: session?.id ?? null,
+    secondaryTerminalSessionId: null,
     commandHistory: [],
     remoteEntries: [],
     remoteRootEntries: [],
@@ -228,6 +231,7 @@ function createController(session: SessionTab | null = sampleSession, overrides?
     uploadFileToCurrentDirectory: vi.fn(),
     downloadRemoteFile: vi.fn(),
     retryTransfer: vi.fn(),
+    cancelTransfer: vi.fn(),
     clearCompletedTransfers: vi.fn(),
     createRemoteDirectory: vi.fn(),
     renameRemoteEntry: vi.fn(),
@@ -235,6 +239,10 @@ function createController(session: SessionTab | null = sampleSession, overrides?
     saveSnippet: vi.fn(),
     deleteSnippet: vi.fn(),
     runSnippetOnActiveSession: vi.fn(),
+    deleteTrustedHost: vi.fn(),
+    splitTerminal: vi.fn(),
+    focusTerminalPane: vi.fn(),
+    closeActiveTerminalPane: vi.fn(),
     saveSettings: vi.fn(),
     selectBottomPanel: vi.fn(),
     toggleBottomPanel: vi.fn(),
@@ -344,6 +352,38 @@ describe("TerminalWorkspace", () => {
     expect(screen.getByRole("button", { name: "复制" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "粘贴" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "重连" })).toBeInTheDocument();
+  });
+
+  test("renders split panes and focuses the selected pane", async () => {
+    const focusTerminalPane = vi.fn();
+    const controller = createController(sampleSession, {
+      focusTerminalPane,
+      state: {
+        ...buildState(sampleSession),
+        sessions: [sampleSession, otherSession],
+        activeSessionId: otherSession.id,
+        primaryTerminalSessionId: sampleSession.id,
+        secondaryTerminalSessionId: otherSession.id,
+        settings: {
+          ...defaultAppSettings,
+          workspace: {
+            ...defaultAppSettings.workspace,
+            terminalSplitDirection: "horizontal",
+            activeTerminalPane: "secondary",
+          },
+        },
+      },
+      activeSession: otherSession,
+    });
+
+    render(<TerminalWorkspace controller={controller} />);
+
+    expect(screen.getByTestId("terminal-pane-primary")).toBeInTheDocument();
+    expect(screen.getByTestId("terminal-pane-secondary")).toBeInTheDocument();
+
+    const focusButtons = screen.getAllByRole("button", { name: "聚焦" });
+    await userEvent.click(focusButtons[0]);
+    expect(focusTerminalPane).toHaveBeenCalledWith("primary");
   });
 
   test("keeps terminal output instance alive when the theme changes", () => {

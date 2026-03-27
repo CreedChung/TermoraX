@@ -1,9 +1,6 @@
 use tauri::Manager;
 
-use crate::{
-    commands,
-    services::app_state::AppState,
-};
+use crate::{commands, services::app_state::AppState};
 
 pub fn run() {
     let mut builder = tauri::Builder::default().plugin(tauri_plugin_opener::init());
@@ -54,7 +51,9 @@ pub fn run() {
             commands::rename_remote_entry,
             commands::delete_remote_entry,
             commands::retry_transfer_task,
-            commands::clear_completed_transfer_tasks
+            commands::cancel_transfer_task,
+            commands::clear_completed_transfer_tasks,
+            commands::delete_trusted_host
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,6 +1,14 @@
-import { useCallback, useEffect, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import type { WorkspaceController } from "../../../app/useWorkspaceApp";
-import type { ThemeId } from "../../../entities/domain";
+import type { ThemeId, TrustedHost } from "../../../entities/domain";
 import { ConnectionSidebar } from "../../connections/components/ConnectionSidebar";
 import { getThemeDefinition } from "../../settings/model/themes";
 import { SnippetPanel } from "../../snippets/components/SnippetPanel";
@@ -8,11 +16,19 @@ import { FilePanel } from "../../sftp/components/FilePanel";
 import { TransferPanel } from "../../transfers/components/TransferPanel";
 import { TerminalWorkspace } from "../../terminal/components/TerminalWorkspace";
 import { getLocaleState, t } from "../../../shared/i18n";
+import { formatTimestamp } from "../../../shared/lib/time";
 import { HistoryPanel } from "./HistoryPanel";
 import { LogPanel } from "./LogPanel";
 
 interface WorkspaceShellProps {
   controller: WorkspaceController;
+}
+
+interface CommandPaletteAction {
+  id: string;
+  title: string;
+  keywords: string;
+  onSelect: () => void;
 }
 
 const MIN_LEFT_PANE_WIDTH = 220;
@@ -35,9 +51,12 @@ export function WorkspaceShell({ controller }: WorkspaceShellProps) {
   const runningTransfers = state.transfers.filter((task) => task.status === "running").length;
   const [leftPaneWidth, setLeftPaneWidth] = useState(state.settings.workspace.leftPaneWidth);
   const [bottomPaneHeight, setBottomPaneHeight] = useState(state.settings.workspace.bottomPaneHeight);
-  const [toolbarSearch, setToolbarSearch] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [createRequestKey, setCreateRequestKey] = useState(0);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [commandQuery, setCommandQuery] = useState("");
+  const [selectedCommandIndex, setSelectedCommandIndex] = useState(0);
+  const [trustedHostsOpen, setTrustedHostsOpen] = useState(false);
 
   useEffect(() => {
     setLeftPaneWidth(state.settings.workspace.leftPaneWidth);
@@ -69,6 +88,11 @@ export function WorkspaceShell({ controller }: WorkspaceShellProps) {
       if (event.key.toLowerCase() === "j") {
         event.preventDefault();
         void controller.toggleBottomPanel();
+      }
+
+      if (event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setCommandPaletteOpen(true);
       }
     };
 
@@ -129,6 +153,16 @@ export function WorkspaceShell({ controller }: WorkspaceShellProps) {
     setCreateRequestKey((current) => current + 1);
   }
 
+  function closeCommandPalette() {
+    setCommandPaletteOpen(false);
+    setCommandQuery("");
+    setSelectedCommandIndex(0);
+  }
+
+  function openCommandPalette() {
+    setCommandPaletteOpen(true);
+  }
+
   function handleBottomPaneTabSelect(panelId: "files" | "snippets" | "history" | "logs") {
     if (state.settings.workspace.bottomPaneVisible && state.settings.workspace.bottomPane === panelId) {
       void controller.toggleBottomPanel();
@@ -136,6 +170,177 @@ export function WorkspaceShell({ controller }: WorkspaceShellProps) {
     }
 
     void controller.selectBottomPanel(panelId);
+  }
+
+  const commandPaletteActions = useMemo<CommandPaletteAction[]>(() => {
+    const actions: CommandPaletteAction[] = [
+      {
+        id: "workspace.new-connection",
+        title: t("toolbar.newConnection"),
+        keywords: "connection new create ssh",
+        onSelect: () => openConnectionEditor(),
+      },
+      {
+        id: "workspace.toggle-sidebar",
+        title: t("toolbar.toggleSidebar"),
+        keywords: "sidebar pane left",
+        onSelect: () => void controller.toggleLeftPane(),
+      },
+      {
+        id: "workspace.toggle-tools",
+        title: t("toolbar.toggleTools"),
+        keywords: "bottom panel tools",
+        onSelect: () => void controller.toggleBottomPanel(),
+      },
+      {
+        id: "workspace.bottom.files",
+        title: t("workspace.action.files"),
+        keywords: "files sftp transfer",
+        onSelect: () => void controller.selectBottomPanel("files"),
+      },
+      {
+        id: "workspace.bottom.snippets",
+        title: t("workspace.action.snippets"),
+        keywords: "snippets command",
+        onSelect: () => void controller.selectBottomPanel("snippets"),
+      },
+      {
+        id: "workspace.bottom.history",
+        title: t("workspace.action.history"),
+        keywords: "history commands",
+        onSelect: () => void controller.selectBottomPanel("history"),
+      },
+      {
+        id: "workspace.bottom.logs",
+        title: t("workspace.action.logs"),
+        keywords: "logs activity",
+        onSelect: () => void controller.selectBottomPanel("logs"),
+      },
+      {
+        id: "workspace.trusted-hosts",
+        title: t("trustedHosts.title"),
+        keywords: "trusted hosts fingerprint ssh security",
+        onSelect: () => setTrustedHostsOpen(true),
+      },
+    ];
+
+    if (activeSession) {
+      actions.push(
+        {
+          id: "terminal.split-vertical",
+          title: t("terminal.splitVertical"),
+          keywords: "terminal split vertical pane",
+          onSelect: () => void controller.splitTerminal("vertical"),
+        },
+        {
+          id: "terminal.split-horizontal",
+          title: t("terminal.splitHorizontal"),
+          keywords: "terminal split horizontal pane",
+          onSelect: () => void controller.splitTerminal("horizontal"),
+        },
+        {
+          id: "terminal.close-pane",
+          title:
+            state.settings.workspace.terminalSplitDirection === "none"
+              ? t("terminal.closeSession")
+              : t("terminal.closePane"),
+          keywords: "terminal close pane session",
+          onSelect: () => void controller.closeActiveTerminalPane(),
+        },
+      );
+    }
+
+    if (state.settings.workspace.terminalSplitDirection !== "none") {
+      actions.push(
+        {
+          id: "terminal.focus-primary",
+          title: t("terminal.focusPrimary"),
+          keywords: "terminal focus primary pane",
+          onSelect: () => void controller.focusTerminalPane("primary"),
+        },
+        {
+          id: "terminal.focus-secondary",
+          title: t("terminal.focusSecondary"),
+          keywords: "terminal focus secondary pane",
+          onSelect: () => void controller.focusTerminalPane("secondary"),
+        },
+      );
+    }
+
+    state.sessions.forEach((session) => {
+      actions.push({
+        id: `session.${session.id}`,
+        title: `${t("terminal.switchSession")} ${session.title}`,
+        keywords: `${session.title} session terminal ssh`,
+        onSelect: () => controller.selectSession(session.id),
+      });
+    });
+
+    state.connections.slice(0, 12).forEach((connection) => {
+      actions.push({
+        id: `connection.${connection.id}`,
+        title: `${t("connections.openSession")} ${connection.name}`,
+        keywords: `${connection.name} ${connection.host} ${connection.username} connection ssh`,
+        onSelect: () => void controller.openSession(connection.id),
+      });
+    });
+
+    return actions;
+  }, [
+    activeSession,
+    controller,
+    state.connections,
+    state.sessions,
+    state.settings.workspace.terminalSplitDirection,
+  ]);
+
+  const filteredActions = useMemo(() => {
+    const normalizedQuery = commandQuery.trim().toLowerCase();
+    if (!normalizedQuery) {
+      return commandPaletteActions;
+    }
+
+    return commandPaletteActions.filter((action) =>
+      `${action.title} ${action.keywords}`.toLowerCase().includes(normalizedQuery),
+    );
+  }, [commandPaletteActions, commandQuery]);
+
+  useEffect(() => {
+    setSelectedCommandIndex((current) => Math.min(current, Math.max(filteredActions.length - 1, 0)));
+  }, [filteredActions.length]);
+
+  function executeCommandAction(action: CommandPaletteAction | undefined) {
+    if (!action) {
+      return;
+    }
+
+    closeCommandPalette();
+    action.onSelect();
+  }
+
+  function handleCommandPaletteKeyDown(event: ReactKeyboardEvent<HTMLInputElement>) {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setSelectedCommandIndex((current) => Math.min(current + 1, Math.max(filteredActions.length - 1, 0)));
+      return;
+    }
+
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setSelectedCommandIndex((current) => Math.max(current - 1, 0));
+      return;
+    }
+
+    if (event.key === "Enter") {
+      event.preventDefault();
+      executeCommandAction(filteredActions[selectedCommandIndex]);
+      return;
+    }
+
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeCommandPalette();
+    }
   }
 
   return (
@@ -157,11 +362,16 @@ export function WorkspaceShell({ controller }: WorkspaceShellProps) {
             {t("toolbar.quickConnect")}
           </button>
           <input
-            aria-label={t("toolbar.searchPlaceholder")}
+            aria-label={t("toolbar.commandPalette")}
             className="workspace-toolbar__search"
-            onChange={(event) => setToolbarSearch(event.target.value)}
-            placeholder={t("toolbar.searchPlaceholder")}
-            value={toolbarSearch}
+            onChange={(event) => {
+              setCommandQuery(event.target.value);
+              setCommandPaletteOpen(true);
+            }}
+            onFocus={openCommandPalette}
+            onKeyDown={handleCommandPaletteKeyDown}
+            placeholder={t("toolbar.commandPalette")}
+            value={commandPaletteOpen ? commandQuery : ""}
           />
         </div>
 
@@ -209,6 +419,9 @@ export function WorkspaceShell({ controller }: WorkspaceShellProps) {
                 <button className="ghost-button toolbar-button" onClick={() => void controller.resetSettings()} type="button">
                   {t("workspace.action.resetSettings")}
                 </button>
+                <button className="ghost-button toolbar-button" onClick={() => setTrustedHostsOpen(true)} type="button">
+                  {t("trustedHosts.title")}
+                </button>
                 {localeState.hasPendingLocaleHook ? (
                   <span className="workspace-toolbar__locale-hint">
                     {t("locale.pendingHook", { locale: localeState.systemLocale })}
@@ -226,12 +439,7 @@ export function WorkspaceShell({ controller }: WorkspaceShellProps) {
         {state.settings.workspace.leftPaneVisible ? (
           <>
             <aside className="workspace-pane workspace-pane--left" style={{ width: `${leftPaneWidth}px` }}>
-              <ConnectionSidebar
-                controller={controller}
-                createRequestKey={createRequestKey}
-                onSearchTermChange={setToolbarSearch}
-                searchTerm={toolbarSearch}
-              />
+              <ConnectionSidebar controller={controller} createRequestKey={createRequestKey} />
             </aside>
             <div
               aria-orientation="vertical"
@@ -319,6 +527,7 @@ export function WorkspaceShell({ controller }: WorkspaceShellProps) {
                         {state.transfers.length > 0 ? (
                           <div className="workspace-files-panel__transfers">
                             <TransferPanel
+                              onCancel={controller.cancelTransfer}
                               onClearCompleted={controller.clearCompletedTransfers}
                               onRetry={controller.retryTransfer}
                               tasks={state.transfers}
@@ -343,6 +552,100 @@ export function WorkspaceShell({ controller }: WorkspaceShellProps) {
           ) : null}
         </main>
       </div>
+
+      {commandPaletteOpen ? (
+        <div className="workspace-dialog-overlay" onClick={closeCommandPalette}>
+          <div
+            className="workspace-dialog command-palette"
+            onClick={(event) => event.stopPropagation()}
+            role="dialog"
+          >
+            <header className="command-palette__header">
+              <strong>{t("toolbar.commandPalette")}</strong>
+              <input
+                autoFocus
+                className="workspace-toolbar__search"
+                onChange={(event) => setCommandQuery(event.target.value)}
+                onKeyDown={handleCommandPaletteKeyDown}
+                placeholder={t("toolbar.commandPalette")}
+                value={commandQuery}
+              />
+            </header>
+            <div className="command-palette__list">
+              {filteredActions.length === 0 ? (
+                <div className="empty-panel">
+                  <p>{t("commandPalette.empty")}</p>
+                </div>
+              ) : (
+                filteredActions.map((action, index) => (
+                  <button
+                    className={`command-palette__item ${index === selectedCommandIndex ? "is-active" : ""}`}
+                    key={action.id}
+                    onClick={() => executeCommandAction(action)}
+                    onMouseEnter={() => setSelectedCommandIndex(index)}
+                    type="button"
+                  >
+                    {action.title}
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {trustedHostsOpen ? (
+        <div className="workspace-dialog-overlay" onClick={() => setTrustedHostsOpen(false)}>
+          <div className="workspace-dialog trusted-hosts-dialog" onClick={(event) => event.stopPropagation()} role="dialog">
+            <header className="trusted-hosts-dialog__header">
+              <div>
+                <strong>{t("trustedHosts.title")}</strong>
+                <span>{t("trustedHosts.subtitle", { count: state.trustedHosts.length })}</span>
+              </div>
+              <button className="ghost-button toolbar-button" onClick={() => setTrustedHostsOpen(false)} type="button">
+                {t("trustedHosts.close")}
+              </button>
+            </header>
+            <div className="trusted-hosts-dialog__list">
+              {state.trustedHosts.length === 0 ? (
+                <div className="empty-panel">
+                  <p>{t("trustedHosts.empty")}</p>
+                </div>
+              ) : (
+                state.trustedHosts.map((host) => (
+                  <TrustedHostRow
+                    host={host}
+                    key={`${host.host}:${host.port}`}
+                    onDelete={() => void controller.deleteTrustedHost(host)}
+                  />
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
+  );
+}
+
+function TrustedHostRow({
+  host,
+  onDelete,
+}: {
+  host: TrustedHost;
+  onDelete: () => void;
+}) {
+  return (
+    <article className="trusted-host-row">
+      <div className="trusted-host-row__summary">
+        <strong>{`${host.host}:${host.port}`}</strong>
+        <span>{host.algorithm}</span>
+        <code>{host.fingerprint}</code>
+        <span>{t("trustedHosts.trustedAt", { time: formatTimestamp(host.trustedAt) })}</span>
+      </div>
+      <button className="danger-button toolbar-button" onClick={onDelete} type="button">
+        {t("trustedHosts.delete")}
+      </button>
+    </article>
   );
 }

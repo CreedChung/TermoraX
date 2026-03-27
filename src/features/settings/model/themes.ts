@@ -1,4 +1,4 @@
-import type { AppSettings, BottomPanelId, ThemeId } from "../../../entities/domain";
+import type { AppSettings, BottomPanelId, TerminalPaneId, TerminalSplitDirection, ThemeId } from "../../../entities/domain";
 import { defaultAppSettings } from "./defaults";
 
 type CssThemeVariables = Partial<Record<`--${string}`, string>>;
@@ -230,6 +230,23 @@ export function normalizeBottomPanelId(panelId: string | null | undefined): Bott
   }
 }
 
+export function normalizeTerminalSplitDirection(
+  direction: string | null | undefined,
+): TerminalSplitDirection {
+  switch (direction) {
+    case "horizontal":
+      return "horizontal";
+    case "vertical":
+      return "vertical";
+    default:
+      return "none";
+  }
+}
+
+export function normalizeTerminalPaneId(paneId: string | null | undefined): TerminalPaneId {
+  return paneId === "secondary" ? "secondary" : "primary";
+}
+
 export function normalizeAppSettings(settings: AppSettings): AppSettings {
   const workspaceRecord = settings.workspace as unknown as Record<string, unknown>;
   const leftPaneVisible =
@@ -263,6 +280,16 @@ export function normalizeAppSettings(settings: AppSettings): AppSettings {
           ? workspaceRecord.rightPanel
           : defaultAppSettings.workspace.bottomPane,
   );
+  const terminalSplitDirection = normalizeTerminalSplitDirection(
+    typeof workspaceRecord.terminalSplitDirection === "string"
+      ? workspaceRecord.terminalSplitDirection
+      : null,
+  );
+  const activeTerminalPane = normalizeTerminalPaneId(
+    typeof workspaceRecord.activeTerminalPane === "string"
+      ? workspaceRecord.activeTerminalPane
+      : null,
+  );
 
   return {
     ...settings,
@@ -276,6 +303,8 @@ export function normalizeAppSettings(settings: AppSettings): AppSettings {
       bottomPane,
       bottomPaneVisible,
       bottomPaneHeight,
+      terminalSplitDirection,
+      activeTerminalPane,
     },
   };
 }

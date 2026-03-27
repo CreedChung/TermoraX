@@ -7,6 +7,8 @@ export type ExtensionKind =
   | "connectionProtocol";
 export type ThemeId = "midnight" | "sand" | "jade" | "tide" | "graphite";
 export type BottomPanelId = "files" | "snippets" | "history" | "logs";
+export type TerminalSplitDirection = "none" | "horizontal" | "vertical";
+export type TerminalPaneId = "primary" | "secondary";
 
 export interface ConnectionProfile {
   id: string;
@@ -61,6 +63,14 @@ export interface HostFingerprintInspection {
 }
 
 export type PendingHostVerification = HostFingerprintInspection;
+
+export interface TrustedHost {
+  host: string;
+  port: number;
+  algorithm: string;
+  fingerprint: string;
+  trustedAt: string;
+}
 
 export interface ConnectionExportResult {
   content: string;
@@ -121,7 +131,7 @@ export interface RemoteDirectoryListing {
 }
 
 export type TransferDirection = "upload" | "download";
-export type TransferStatus = "running" | "succeeded" | "failed";
+export type TransferStatus = "running" | "canceling" | "succeeded" | "failed" | "canceled";
 
 export interface TransferTask {
   id: string;
@@ -162,6 +172,8 @@ export interface WorkspaceLayout {
   bottomPane: BottomPanelId;
   bottomPaneVisible: boolean;
   bottomPaneHeight: number;
+  terminalSplitDirection: TerminalSplitDirection;
+  activeTerminalPane: TerminalPaneId;
 }
 
 export interface AppSettings {
@@ -191,6 +203,7 @@ export interface BootstrapState {
   extensions: ExtensionContribution[];
   activity: ActivityEntry[];
   transfers: TransferTask[];
+  trustedHosts: TrustedHost[];
 }
 
 export interface ConnectionImportResult {
