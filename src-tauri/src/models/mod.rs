@@ -2,7 +2,12 @@ use serde::{Deserialize, Serialize};
 
 const DEFAULT_THEME_ID: &str = "midnight";
 const DEFAULT_BOTTOM_PANEL_ID: &str = "files";
-const DEFAULT_SIDE_PANEL_ID: &str = "activity";
+const MIN_LEFT_PANE_WIDTH: u16 = 200;
+const MAX_LEFT_PANE_WIDTH: u16 = 320;
+const DEFAULT_LEFT_PANE_WIDTH: u16 = 240;
+const MIN_BOTTOM_PANE_HEIGHT: u16 = 160;
+const MAX_BOTTOM_PANE_HEIGHT: u16 = 320;
+const DEFAULT_BOTTOM_PANE_HEIGHT: u16 = 200;
 
 fn default_font_family() -> String {
     "\"JetBrains Mono\", \"Cascadia Code\", Consolas, monospace".into()
@@ -28,24 +33,24 @@ fn default_copy_on_select() -> bool {
     false
 }
 
-fn default_sidebar_collapsed() -> bool {
-    false
+fn default_left_pane_visible() -> bool {
+    true
+}
+
+fn default_left_pane_width() -> u16 {
+    DEFAULT_LEFT_PANE_WIDTH
 }
 
 fn default_bottom_panel() -> String {
     DEFAULT_BOTTOM_PANEL_ID.into()
 }
 
-fn default_bottom_panel_visible() -> bool {
-    true
+fn default_bottom_pane_visible() -> bool {
+    false
 }
 
-fn default_side_panel() -> String {
-    DEFAULT_SIDE_PANEL_ID.into()
-}
-
-fn default_side_panel_visible() -> bool {
-    true
+fn default_bottom_pane_height() -> u16 {
+    DEFAULT_BOTTOM_PANE_HEIGHT
 }
 
 fn normalize_theme_id(value: &str) -> &'static str {
@@ -62,15 +67,18 @@ fn normalize_theme_id(value: &str) -> &'static str {
 fn normalize_bottom_panel_id(value: &str) -> &'static str {
     match value {
         "snippets" => "snippets",
+        "history" => "history",
+        "logs" => "logs",
         _ => DEFAULT_BOTTOM_PANEL_ID,
     }
 }
 
-fn normalize_side_panel_id(value: &str) -> &'static str {
-    match value {
-        "transfers" => "transfers",
-        _ => DEFAULT_SIDE_PANEL_ID,
-    }
+fn clamp_left_pane_width(value: u16) -> u16 {
+    value.clamp(MIN_LEFT_PANE_WIDTH, MAX_LEFT_PANE_WIDTH)
+}
+
+fn clamp_bottom_pane_height(value: u16) -> u16 {
+    value.clamp(MIN_BOTTOM_PANE_HEIGHT, MAX_BOTTOM_PANE_HEIGHT)
 }
 
 /// A saved SSH connection profile shown in the workspace UI.
@@ -284,37 +292,94 @@ impl TerminalPreferences {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceLayout {
-    #[serde(default = "default_sidebar_collapsed")]
-    pub sidebar_collapsed: bool,
-    #[serde(default = "default_bottom_panel", alias = "rightPanel")]
-    pub bottom_panel: String,
-    #[serde(default = "default_bottom_panel_visible", alias = "rightPanelVisible")]
-    pub bottom_panel_visible: bool,
-    #[serde(default = "default_side_panel")]
-    pub side_panel: String,
-    #[serde(default = "default_side_panel_visible")]
-    pub side_panel_visible: bool,
+    #[serde(default = "default_left_pane_visible")]
+    pub left_pane_visible: bool,
+    #[serde(default = "default_left_pane_width")]
+    pub left_pane_width: u16,
+    #[serde(default = "default_bottom_panel")]
+    pub bottom_pane: String,
+    #[serde(default = "default_bottom_pane_visible")]
+    pub bottom_pane_visible: bool,
+    #[serde(default = "default_bottom_pane_height")]
+    pub bottom_pane_height: u16,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceLayoutWire {
+    #[serde(default)]
+    left_pane_visible: Option<bool>,
+    #[serde(default)]
+    left_pane_width: Option<u16>,
+    #[serde(default)]
+    bottom_pane: Option<String>,
+    #[serde(default, alias = "bottomPanel", alias = "rightPanel")]
+    bottom_panel: Option<String>,
+    #[serde(default)]
+    bottom_pane_visible: Option<bool>,
+    #[serde(
+        default,
+        alias = "bottomPanelVisible",
+        alias = "rightPanelVisible"
+    )]
+    bottom_panel_visible: Option<bool>,
+    #[serde(default)]
+    bottom_pane_height: Option<u16>,
+    #[serde(default)]
+    sidebar_collapsed: Option<bool>,
 }
 
 impl Default for WorkspaceLayout {
     fn default() -> Self {
         Self {
-            sidebar_collapsed: default_sidebar_collapsed(),
-            bottom_panel: default_bottom_panel(),
-            bottom_panel_visible: default_bottom_panel_visible(),
-            side_panel: default_side_panel(),
-            side_panel_visible: default_side_panel_visible(),
+            left_pane_visible: default_left_pane_visible(),
+            left_pane_width: default_left_pane_width(),
+            bottom_pane: default_bottom_panel(),
+            bottom_pane_visible: default_bottom_pane_visible(),
+            bottom_pane_height: default_bottom_pane_height(),
         }
+    }
+}
+
+impl<'de> Deserialize<'de> for WorkspaceLayout {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let wire = WorkspaceLayoutWire::deserialize(deserializer)?;
+
+        Ok(Self {
+            left_pane_visible: wire
+                .left_pane_visible
+                .unwrap_or_else(|| !wire.sidebar_collapsed.unwrap_or(false)),
+            left_pane_width: clamp_left_pane_width(
+                wire.left_pane_width.unwrap_or_else(default_left_pane_width),
+            ),
+            bottom_pane: wire
+                .bottom_pane
+                .or(wire.bottom_panel)
+                .unwrap_or_else(default_bottom_panel),
+            bottom_pane_visible: wire
+                .bottom_pane_visible
+                .or(wire.bottom_panel_visible)
+                .unwrap_or_else(default_bottom_pane_visible),
+            bottom_pane_height: clamp_bottom_pane_height(
+                wire.bottom_pane_height
+                    .unwrap_or_else(default_bottom_pane_height),
+            ),
+        }
+        .normalize())
     }
 }
 
 impl WorkspaceLayout {
     pub fn normalize(mut self) -> Self {
-        self.bottom_panel = normalize_bottom_panel_id(self.bottom_panel.trim()).into();
-        self.side_panel = normalize_side_panel_id(self.side_panel.trim()).into();
+        self.left_pane_width = clamp_left_pane_width(self.left_pane_width);
+        self.bottom_pane = normalize_bottom_panel_id(self.bottom_pane.trim()).into();
+        self.bottom_pane_height = clamp_bottom_pane_height(self.bottom_pane_height);
         self
     }
 }

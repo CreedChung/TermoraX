@@ -4,7 +4,6 @@ import { getSessionOutputState, subscribeSessionOutput } from "../../../app/sess
 import type { ThemeId } from "../../../entities/domain";
 import { getThemeDefinition, listThemeDefinitions } from "../../settings/model/themes";
 import { StatusBadge } from "../../../shared/components/StatusBadge";
-import { Panel } from "../../../shared/components/Panel";
 import { t } from "../../../shared/i18n";
 import { readClipboardText, writeClipboardText } from "../../../shared/lib/clipboard";
 import { formatTimestamp } from "../../../shared/lib/time";
@@ -58,48 +57,20 @@ export function TerminalWorkspace({ controller }: TerminalWorkspaceProps) {
   }
 
   return (
-    <Panel
-      title={t("terminal.title")}
-      subtitle={activeSession ? activeSession.title : t("files.noSession")}
-      actions={
-        <div className="button-row">
-          <label className="theme-select">
-            <span className="sr-only">{t("terminal.themeLabel")}</span>
-            <select
-              aria-label={t("terminal.themeLabel")}
-              value={state.settings.terminal.theme}
-              onChange={(event) => void controller.updateTheme(event.target.value as ThemeId)}
-            >
-              {themeOptions.map((theme) => (
-                <option key={theme.id} value={theme.id}>
-                  {t(theme.labelKey)}
-                </option>
-              ))}
-            </select>
-          </label>
-          <button className="ghost-button" onClick={() => void controller.toggleBottomPanel()} type="button">
-            {t("terminal.toggleBottomPanel")}
-          </button>
-          <button className="ghost-button" onClick={() => void controller.toggleSidePanel()} type="button">
-            {t("terminal.toggleSidePanel")}
-          </button>
-        </div>
-      }
-      className="terminal-panel"
-    >
+    <section className="terminal-workspace">
       <div className="terminal-shell">
-        <div className="tab-strip">
+        <div className="terminal-tabs">
           {state.sessions.map((session) => (
             <button
               key={session.id}
-              className={`tab-chip ${state.activeSessionId === session.id ? "is-active" : ""}`}
+              className={`terminal-tab ${state.activeSessionId === session.id ? "is-active" : ""}`}
               onClick={() => controller.selectSession(session.id)}
               type="button"
             >
               <span>{session.title}</span>
               <StatusBadge status={session.status} />
               <span
-                className="tab-chip__close"
+                className="terminal-tab__close"
                 onClick={(event) => {
                   event.stopPropagation();
                   void controller.closeSession(session.id);
@@ -112,6 +83,28 @@ export function TerminalWorkspace({ controller }: TerminalWorkspaceProps) {
             </button>
           ))}
           {state.sessions.length === 0 ? <div className="tab-strip__empty">{t("terminal.openHint")}</div> : null}
+          <div className="terminal-tabs__actions">
+            <label className="theme-select">
+              <span className="sr-only">{t("terminal.themeLabel")}</span>
+              <select
+                aria-label={t("terminal.themeLabel")}
+                value={state.settings.terminal.theme}
+                onChange={(event) => void controller.updateTheme(event.target.value as ThemeId)}
+              >
+                {themeOptions.map((theme) => (
+                  <option key={theme.id} value={theme.id}>
+                    {t(theme.labelKey)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button className="ghost-button toolbar-button" onClick={() => void controller.toggleLeftPane()} type="button">
+              {t("terminal.toggleLeftPane")}
+            </button>
+            <button className="ghost-button toolbar-button" onClick={() => void controller.toggleBottomPanel()} type="button">
+              {t("terminal.toggleBottomPanel")}
+            </button>
+          </div>
         </div>
 
         <div className="terminal-view">
@@ -124,37 +117,37 @@ export function TerminalWorkspace({ controller }: TerminalWorkspaceProps) {
                   <span>{t("terminal.size", { cols: sessionSize.cols, rows: sessionSize.rows })}</span>
                 ) : null}
               </div>
-              <div className="button-row">
+              <div className="terminal-toolbar">
                 <button
-                  className="ghost-button"
+                  className="ghost-button toolbar-button"
                   onClick={() => void hostActionsRef.current?.copySelection()}
                   type="button"
                 >
                   {t("terminal.copy")}
                 </button>
                 <button
-                  className="ghost-button"
+                  className="ghost-button toolbar-button"
                   onClick={() => void hostActionsRef.current?.pasteClipboard()}
                   type="button"
                 >
                   {t("terminal.paste")}
                 </button>
                 <button
-                  className="ghost-button"
+                  className="ghost-button toolbar-button"
                   onClick={() => void controller.reconnectSession(activeSession.id)}
                   type="button"
                 >
                   {t("terminal.reconnect")}
                 </button>
                 <button
-                  className="ghost-button"
+                  className="ghost-button toolbar-button"
                   onClick={() => void controller.clearSessionOutput(activeSession.id)}
                   type="button"
                 >
                   {t("terminal.clearOutput")}
                 </button>
                 <button
-                  className="ghost-button"
+                  className="ghost-button toolbar-button"
                   disabled={!hasOtherSessions}
                   onClick={() => void controller.closeOtherSessions(activeSession.id)}
                   title={!hasOtherSessions ? t("terminal.noOtherSessions") : undefined}
@@ -188,7 +181,7 @@ export function TerminalWorkspace({ controller }: TerminalWorkspaceProps) {
           )}
         </div>
       </div>
-    </Panel>
+    </section>
   );
 }
 

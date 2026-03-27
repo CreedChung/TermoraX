@@ -15,7 +15,6 @@ import type {
   RemoteFileEntry,
   SessionEvent,
   SessionTab,
-  SidePanelId,
   ThemeId,
   TransferTask,
 } from "../entities/domain";
@@ -34,11 +33,20 @@ import { debugLog } from "../shared/lib/debug";
 import { applySessionOutputEvents, applySessionSnapshotOutputs } from "./sessionOutputStore";
 import { mergeSessionEventMetadata } from "./sessionEvents";
 
+export interface CommandHistoryEntry {
+  id: string;
+  sessionId: string;
+  sessionTitle: string;
+  command: string;
+  executedAt: string;
+}
+
 interface WorkspaceState extends BootstrapState {
   isLoading: boolean;
   error: string | null;
   selectedConnectionId: string | null;
   activeSessionId: string | null;
+  commandHistory: CommandHistoryEntry[];
   remoteEntries: RemoteFileEntry[];
   remoteRootEntries: RemoteFileEntry[];
   remoteEntriesLoading: boolean;
@@ -62,6 +70,7 @@ const initialState: WorkspaceState = {
   error: null,
   selectedConnectionId: null,
   activeSessionId: null,
+  commandHistory: [],
   remoteEntries: [],
   remoteRootEntries: [],
   remoteEntriesLoading: false,
@@ -77,6 +86,7 @@ const SESSION_EVENT_FLUSH_DELAY_MS = 33;
 const REMOTE_PANEL_IDLE_REFRESH_DELAY_MS = 1200;
 const SESSION_OUTPUT_DEBUG_FLAG = "termorax-debug-session-output";
 const SESSION_OUTPUT_PREVIEW_CHARS = 120;
+const MAX_COMMAND_HISTORY_ENTRIES = 100;
 
 function previewOutput(value: string): string {
   const sanitized = value.replace(/\r/g, "\\r").replace(/\n/g, "\\n");
@@ -186,6 +196,36 @@ export function updateSessionTerminalSize(
   return mutated ? updated : sessions;
 }
 
+export function collectCommandHistoryEntries(currentDraft: string, input: string): {
+  nextDraft: string;
+  commands: string[];
+} {
+  let nextDraft = currentDraft;
+  const commands: string[] = [];
+
+  for (const character of input) {
+    if (character === "\r" || character === "\n") {
+      const command = nextDraft.trim();
+      if (command) {
+        commands.push(command);
+      }
+      nextDraft = "";
+      continue;
+    }
+
+    if (character === "\u007f" || character === "\b") {
+      nextDraft = nextDraft.slice(0, -1);
+      continue;
+    }
+
+    if (character >= " " || character === "\t") {
+      nextDraft += character;
+    }
+  }
+
+  return { nextDraft, commands };
+}
+
 export function useWorkspaceApp() {
   const [state, setState] = useState<WorkspaceState>(initialState);
   const remoteEntriesRequestRef = useRef(0);
@@ -194,12 +234,13 @@ export function useWorkspaceApp() {
   const sessionEventFlushTimerRef = useRef<number | null>(null);
   const lastLoadedRemotePathRef = useRef<string | null>(null);
   const lastLoadedRootSessionRef = useRef<string | null>(null);
+  const commandDraftsRef = useRef<Record<string, string>>({});
   const activeSessionRecord = state.sessions.find((item) => item.id === state.activeSessionId) ?? null;
   const activeSessionCurrentPath = activeSessionRecord?.currentPath ?? null;
   const activeSessionUpdatedAt = activeSessionRecord?.updatedAt ?? null;
   const activeSessionStatus = activeSessionRecord?.status ?? null;
   const filesPanelVisible =
-    state.settings.workspace.bottomPanelVisible && state.settings.workspace.bottomPanel === "files";
+    state.settings.workspace.bottomPaneVisible && state.settings.workspace.bottomPane === "files";
 
   const refreshRemoteEntries = useCallback(async (sessionId: string) => {
     const requestId = remoteEntriesRequestRef.current + 1;
@@ -711,6 +752,28 @@ export function useWorkspaceApp() {
       if (!input) {
         return;
       }
+      const session = state.sessions.find((item) => item.id === sessionId);
+      const currentDraft = commandDraftsRef.current[sessionId] ?? "";
+      const { nextDraft, commands } = collectCommandHistoryEntries(currentDraft, input);
+      commandDraftsRef.current = {
+        ...commandDraftsRef.current,
+        [sessionId]: nextDraft,
+      };
+      if (commands.length > 0 && session) {
+        setState((current) => ({
+          ...current,
+          commandHistory: [
+            ...commands.map((command) => ({
+              id: createId("history"),
+              sessionId,
+              sessionTitle: session.title,
+              command,
+              executedAt: new Date().toISOString(),
+            })),
+            ...current.commandHistory,
+          ].slice(0, MAX_COMMAND_HISTORY_ENTRIES),
+        }));
+      }
       await runMutation(() => desktopClient.sendSessionInput(sessionId, input));
     },
     async openRemoteDirectory(path: string) {
@@ -846,14 +909,14 @@ export function useWorkspaceApp() {
     async saveSettings(settings: AppSettings) {
       await runMutation(() => desktopClient.saveSettings(normalizeAppSettings(settings)));
     },
-    async selectBottomPanel(bottomPanel: BottomPanelId) {
+    async selectBottomPanel(bottomPane: BottomPanelId) {
       await runMutation(() =>
         desktopClient.saveSettings({
           ...state.settings,
           workspace: {
             ...state.settings.workspace,
-            bottomPanel,
-            bottomPanelVisible: true,
+            bottomPane,
+            bottomPaneVisible: true,
           },
         }),
       );
@@ -864,30 +927,40 @@ export function useWorkspaceApp() {
           ...state.settings,
           workspace: {
             ...state.settings.workspace,
-            bottomPanelVisible: !state.settings.workspace.bottomPanelVisible,
+            bottomPaneVisible: !state.settings.workspace.bottomPaneVisible,
           },
         }),
       );
     },
-    async selectSidePanel(sidePanel: SidePanelId) {
+    async toggleLeftPane() {
       await runMutation(() =>
         desktopClient.saveSettings({
           ...state.settings,
           workspace: {
             ...state.settings.workspace,
-            sidePanel,
-            sidePanelVisible: true,
+            leftPaneVisible: !state.settings.workspace.leftPaneVisible,
           },
         }),
       );
     },
-    async toggleSidePanel() {
+    async setLeftPaneWidth(leftPaneWidth: number) {
       await runMutation(() =>
         desktopClient.saveSettings({
           ...state.settings,
           workspace: {
             ...state.settings.workspace,
-            sidePanelVisible: !state.settings.workspace.sidePanelVisible,
+            leftPaneWidth,
+          },
+        }),
+      );
+    },
+    async setBottomPaneHeight(bottomPaneHeight: number) {
+      await runMutation(() =>
+        desktopClient.saveSettings({
+          ...state.settings,
+          workspace: {
+            ...state.settings.workspace,
+            bottomPaneHeight,
           },
         }),
       );

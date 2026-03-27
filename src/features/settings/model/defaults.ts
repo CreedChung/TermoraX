@@ -10,11 +10,11 @@ export const defaultAppSettings: AppSettings = {
     copyOnSelect: false,
   },
   workspace: {
-    sidebarCollapsed: false,
-    bottomPanel: "files",
-    bottomPanelVisible: true,
-    sidePanel: "activity",
-    sidePanelVisible: true,
+    leftPaneVisible: true,
+    leftPaneWidth: 240,
+    bottomPane: "files",
+    bottomPaneVisible: false,
+    bottomPaneHeight: 200,
   },
 };
 

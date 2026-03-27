@@ -1,471 +1,332 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useEffect, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import type { WorkspaceController } from "../../../app/useWorkspaceApp";
+import type { ThemeId } from "../../../entities/domain";
 import { ConnectionSidebar } from "../../connections/components/ConnectionSidebar";
 import { getThemeDefinition } from "../../settings/model/themes";
 import { SnippetPanel } from "../../snippets/components/SnippetPanel";
 import { FilePanel } from "../../sftp/components/FilePanel";
 import { TransferPanel } from "../../transfers/components/TransferPanel";
 import { TerminalWorkspace } from "../../terminal/components/TerminalWorkspace";
-import { formatTimestamp } from "../../../shared/lib/time";
 import { getLocaleState, t } from "../../../shared/i18n";
-import { debugLog, isDebugFlagEnabled } from "../../../shared/lib/debug";
-import { computeWorkspaceScale, WORKSPACE_BASE_HEIGHT, WORKSPACE_BASE_WIDTH } from "../model/layout";
+import { HistoryPanel } from "./HistoryPanel";
+import { LogPanel } from "./LogPanel";
 
 interface WorkspaceShellProps {
   controller: WorkspaceController;
 }
 
-const MAIN_STACK_GAP = 18;
-const MAIN_STACK_DIVIDER_HEIGHT = 10;
-const MIN_TERMINAL_PANEL_HEIGHT = 260;
-const MIN_BOTTOM_PANEL_HEIGHT = 280;
-const WHEEL_DEBUG_FLAG = "termorax-debug-wheel";
+const MIN_LEFT_PANE_WIDTH = 200;
+const MAX_LEFT_PANE_WIDTH = 320;
+const MIN_BOTTOM_PANE_HEIGHT = 160;
+const MAX_BOTTOM_PANE_HEIGHT = 320;
 
-function clampBottomPanelHeight(nextHeight: number, stackHeight: number): number {
-  const reservedHeight = MIN_TERMINAL_PANEL_HEIGHT + MAIN_STACK_DIVIDER_HEIGHT + MAIN_STACK_GAP * 2;
-  const maxBottomHeight = Math.max(stackHeight - reservedHeight, MIN_BOTTOM_PANEL_HEIGHT);
-  return Math.min(Math.max(nextHeight, MIN_BOTTOM_PANEL_HEIGHT), maxBottomHeight);
+function clampLeftPaneWidth(value: number): number {
+  return Math.min(Math.max(value, MIN_LEFT_PANE_WIDTH), MAX_LEFT_PANE_WIDTH);
 }
 
-function describeElement(element: HTMLElement | null): string {
-  if (!element) {
-    return "null";
-  }
-
-  const className =
-    typeof element.className === "string"
-      ? element.className
-          .split(/\s+/)
-          .filter(Boolean)
-          .slice(0, 3)
-          .join(".")
-      : "";
-
-  return [element.tagName.toLowerCase(), element.id ? `#${element.id}` : "", className ? `.${className}` : ""].join("");
+function clampBottomPaneHeight(value: number): number {
+  return Math.min(Math.max(value, MIN_BOTTOM_PANE_HEIGHT), MAX_BOTTOM_PANE_HEIGHT);
 }
 
 export function WorkspaceShell({ controller }: WorkspaceShellProps) {
   const { state, activeSession } = controller;
   const localeState = getLocaleState();
   const themeDefinition = getThemeDefinition(state.settings.terminal.theme);
-  const stageRef = useRef<HTMLDivElement | null>(null);
-  const mainStackRef = useRef<HTMLDivElement | null>(null);
-  const [bottomPanelHeight, setBottomPanelHeight] = useState(420);
-  const [workspaceScale, setWorkspaceScale] = useState(1);
-  const bottomPanelVisible = state.settings.workspace.bottomPanelVisible;
-  const sidePanelVisible = state.settings.workspace.sidePanelVisible;
+  const [leftPaneWidth, setLeftPaneWidth] = useState(state.settings.workspace.leftPaneWidth);
+  const [bottomPaneHeight, setBottomPaneHeight] = useState(state.settings.workspace.bottomPaneHeight);
+  const [toolbarSearch, setToolbarSearch] = useState("");
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [createRequestKey, setCreateRequestKey] = useState(0);
 
   useEffect(() => {
-    if (typeof window === "undefined") {
-      return undefined;
-    }
-
-    // Keep the desktop layout intact and scale the whole stage down when the viewport
-    // becomes smaller than the designed workspace frame.
-    const syncWorkspaceScale = () => {
-      setWorkspaceScale(computeWorkspaceScale(window.innerWidth, window.innerHeight));
-    };
-
-    syncWorkspaceScale();
-    window.addEventListener("resize", syncWorkspaceScale);
-
-    return () => {
-      window.removeEventListener("resize", syncWorkspaceScale);
-    };
-  }, []);
+    setLeftPaneWidth(state.settings.workspace.leftPaneWidth);
+  }, [state.settings.workspace.leftPaneWidth]);
 
   useEffect(() => {
-    debugLog(WHEEL_DEBUG_FLAG, "wheel_debug.mount", {
-      enabled: isDebugFlagEnabled(WHEEL_DEBUG_FLAG),
-      width: typeof window === "undefined" ? null : window.innerWidth,
-      height: typeof window === "undefined" ? null : window.innerHeight,
-      scale: workspaceScale,
-    });
-  }, [workspaceScale]);
+    setBottomPaneHeight(state.settings.workspace.bottomPaneHeight);
+  }, [state.settings.workspace.bottomPaneHeight]);
 
   useEffect(() => {
-    if (!mainStackRef.current || typeof ResizeObserver === "undefined") {
-      return undefined;
-    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const tagName = target?.tagName.toLowerCase();
+      const isEditable =
+        target?.getAttribute("contenteditable") === "true" ||
+        tagName === "input" ||
+        tagName === "textarea" ||
+        tagName === "select";
 
-    const element = mainStackRef.current;
-    const syncBottomPanelHeight = () => {
-      setBottomPanelHeight((currentHeight) => clampBottomPanelHeight(currentHeight, element.clientHeight));
-    };
-
-    syncBottomPanelHeight();
-
-    const observer = new ResizeObserver(() => {
-      syncBottomPanelHeight();
-    });
-
-    observer.observe(element);
-
-    return () => {
-      observer.disconnect();
-    };
-  }, [bottomPanelVisible]);
-
-  useEffect(() => {
-    if (!stageRef.current || typeof window === "undefined") {
-      return undefined;
-    }
-
-    const stage = stageRef.current;
-    let wheelEventCount = 0;
-
-    const isScrollable = (element: HTMLElement, axis: "x" | "y") => {
-      const computedStyle = window.getComputedStyle(element);
-      const overflow = axis === "y" ? computedStyle.overflowY : computedStyle.overflowX;
-      const canOverflow = overflow === "auto" || overflow === "scroll" || overflow === "overlay";
-
-      if (!canOverflow) {
-        return false;
-      }
-
-      return axis === "y"
-        ? element.scrollHeight > element.clientHeight + 1
-        : element.scrollWidth > element.clientWidth + 1;
-    };
-
-    const describeScrollState = (element: HTMLElement) => {
-      const computedStyle = window.getComputedStyle(element);
-      return [
-        describeElement(element),
-        `overflowY=${computedStyle.overflowY}`,
-        `overflowX=${computedStyle.overflowX}`,
-        `client=${element.clientWidth}x${element.clientHeight}`,
-        `scroll=${element.scrollWidth}x${element.scrollHeight}`,
-        `offset=${element.scrollLeft},${element.scrollTop}`,
-      ].join(" ");
-    };
-
-    const logWheelEvent = (scope: "window" | "document" | "stage", event: WheelEvent) => {
-      wheelEventCount += 1;
-      if (wheelEventCount > 30) {
+      if (isEditable || !event.ctrlKey || event.altKey || event.metaKey) {
         return;
       }
 
-      debugLog(WHEEL_DEBUG_FLAG, `wheel_debug.${scope}`, {
-        index: wheelEventCount,
-        deltaX: event.deltaX,
-        deltaY: event.deltaY,
-        clientX: event.clientX,
-        clientY: event.clientY,
-        target: describeElement(event.target instanceof HTMLElement ? event.target : null),
-      });
-    };
-
-    // WebView-based desktop shells can lose native wheel scrolling inside transformed
-    // or deeply nested scroll containers. Forward wheel delta to the nearest scrollable ancestor.
-    const handleWheel = (event: WheelEvent) => {
-      logWheelEvent("stage", event);
-      const pointElement = document.elementFromPoint(event.clientX, event.clientY);
-      const hoveredElement = pointElement instanceof HTMLElement ? pointElement : null;
-      let element = hoveredElement ?? (event.target instanceof HTMLElement ? event.target : null);
-      const chain: string[] = [];
-
-      while (element && element !== stage) {
-        const canScrollY = isScrollable(element, "y");
-        const canScrollX = isScrollable(element, "x");
-        chain.push(
-          `${describeScrollState(element)} canScrollY=${canScrollY} canScrollX=${canScrollX}`,
-        );
-
-        if (canScrollY || canScrollX) {
-          let didScroll = false;
-
-          if (canScrollY && event.deltaY !== 0) {
-            const maxScrollTop = element.scrollHeight - element.clientHeight;
-            const nextScrollTop = Math.min(Math.max(element.scrollTop + event.deltaY, 0), maxScrollTop);
-            if (nextScrollTop !== element.scrollTop) {
-              element.scrollTop = nextScrollTop;
-              didScroll = true;
-            }
-          }
-
-          if (canScrollX && event.deltaX !== 0) {
-            const maxScrollLeft = element.scrollWidth - element.clientWidth;
-            const nextScrollLeft = Math.min(Math.max(element.scrollLeft + event.deltaX, 0), maxScrollLeft);
-            if (nextScrollLeft !== element.scrollLeft) {
-              element.scrollLeft = nextScrollLeft;
-              didScroll = true;
-            }
-          }
-
-          if (didScroll) {
-            debugLog(WHEEL_DEBUG_FLAG, "wheel_debug.scrolled", {
-              deltaX: event.deltaX,
-              deltaY: event.deltaY,
-              hovered: describeElement(hoveredElement),
-              target: describeElement(event.target instanceof HTMLElement ? event.target : null),
-              scrolled: describeElement(element),
-              chain,
-              chainText: chain.join(" -> "),
-            });
-            event.preventDefault();
-            event.stopPropagation();
-            return;
-          }
-        }
-
-        element = element.parentElement;
+      if (event.key.toLowerCase() === "b") {
+        event.preventDefault();
+        void controller.toggleLeftPane();
       }
 
-      debugLog(WHEEL_DEBUG_FLAG, "wheel_debug.unhandled", {
-        deltaX: event.deltaX,
-        deltaY: event.deltaY,
-        hovered: describeElement(hoveredElement),
-        target: describeElement(event.target instanceof HTMLElement ? event.target : null),
-        chain,
-        chainText: chain.join(" -> "),
-      });
+      if (event.key.toLowerCase() === "j") {
+        event.preventDefault();
+        void controller.toggleBottomPanel();
+      }
     };
 
-    const handleWindowWheel = (event: WheelEvent) => {
-      logWheelEvent("window", event);
-    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [controller]);
 
-    const handleDocumentWheel = (event: WheelEvent) => {
-      logWheelEvent("document", event);
-    };
-
-    window.addEventListener("wheel", handleWindowWheel, { capture: true, passive: true });
-    document.addEventListener("wheel", handleDocumentWheel, { capture: true, passive: true });
-    stage.addEventListener("wheel", handleWheel, { passive: false, capture: true });
-
-    return () => {
-      window.removeEventListener("wheel", handleWindowWheel, true);
-      document.removeEventListener("wheel", handleDocumentWheel, true);
-      stage.removeEventListener("wheel", handleWheel, true);
-    };
-  }, []);
-
-  const handleBottomSplitPointerDown = useCallback(
+  const handleLeftSplitPointerDown = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
-      if (!mainStackRef.current || typeof window === "undefined") {
-        return;
-      }
-
       event.preventDefault();
-      const startY = event.clientY;
-      const startHeight = bottomPanelHeight;
-      const stackHeight = mainStackRef.current.clientHeight;
+      const startX = event.clientX;
+      const startWidth = leftPaneWidth;
+      let nextWidth = startWidth;
 
       const onMove = (moveEvent: PointerEvent) => {
-        const deltaY = (moveEvent.clientY - startY) / workspaceScale;
-        const nextHeight = clampBottomPanelHeight(startHeight - deltaY, stackHeight);
-        setBottomPanelHeight(nextHeight);
+        nextWidth = clampLeftPaneWidth(startWidth + moveEvent.clientX - startX);
+        setLeftPaneWidth(nextWidth);
       };
 
       const onUp = () => {
         window.removeEventListener("pointermove", onMove);
         window.removeEventListener("pointerup", onUp);
+        void controller.setLeftPaneWidth(nextWidth);
       };
 
       window.addEventListener("pointermove", onMove);
       window.addEventListener("pointerup", onUp);
     },
-    [bottomPanelHeight, workspaceScale],
+    [controller, leftPaneWidth],
   );
 
-  const workspaceContent = (
-    <div className="workspace">
-            <header className="workspace-topbar">
-              <div>
-                <p className="workspace-topbar__eyebrow">{t("app.name")}</p>
-                <h1>{t("workspace.title")}</h1>
-                {localeState.hasPendingLocaleHook ? (
-                  <p className="workspace-locale-hint">
-                    {t("locale.pendingHook", { locale: localeState.systemLocale })}
-                  </p>
-                ) : null}
-              </div>
-              <div className="workspace-topbar__stats">
-                <div>
-                  <strong>{state.connections.length}</strong>
-                  <span>{t("workspace.metric.connections")}</span>
-                </div>
-                <div>
-                  <strong>{state.sessions.length}</strong>
-                  <span>{t("workspace.metric.sessions")}</span>
-                </div>
-                <div>
-                  <strong>{state.extensions.length}</strong>
-                  <span>{t("workspace.metric.extensions")}</span>
-                </div>
-              </div>
-            </header>
+  const handleBottomSplitPointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      const startY = event.clientY;
+      const startHeight = bottomPaneHeight;
 
-            {state.error ? <div className="error-banner">{state.error}</div> : null}
+      const onMove = (moveEvent: PointerEvent) => {
+        setBottomPaneHeight(clampBottomPaneHeight(startHeight - (moveEvent.clientY - startY)));
+      };
 
-            <div className="workspace-grid">
-              <aside className="workspace-sidebar">
-                <ConnectionSidebar controller={controller} />
-              </aside>
+      const onUp = (upEvent: PointerEvent) => {
+        const nextHeight = clampBottomPaneHeight(startHeight - (upEvent.clientY - startY));
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        void controller.setBottomPaneHeight(nextHeight);
+      };
 
-              <main className="workspace-main">
-                <div className="workspace-main-stack" ref={mainStackRef}>
-                  <TerminalWorkspace controller={controller} />
-                  {bottomPanelVisible ? (
-                    <>
-                      <div
-                        className="workspace-main-divider"
-                        role="separator"
-                        aria-orientation="horizontal"
-                        onPointerDown={handleBottomSplitPointerDown}
-                      />
-                      <section className="workspace-bottom-panel" style={{ height: `${bottomPanelHeight}px` }}>
-                        <div className="workspace-bottom-panel__tabs" role="tablist" aria-label={t("terminal.toggleBottomPanel")}>
-                          <button
-                            type="button"
-                            role="tab"
-                            aria-selected={state.settings.workspace.bottomPanel === "files"}
-                            className={`workspace-bottom-panel__tab ${
-                              state.settings.workspace.bottomPanel === "files" ? "is-active" : ""
-                            }`}
-                            onClick={() => void controller.selectBottomPanel("files")}
-                          >
-                            {t("workspace.action.files")}
-                          </button>
-                          <button
-                            type="button"
-                            role="tab"
-                            aria-selected={state.settings.workspace.bottomPanel === "snippets"}
-                            className={`workspace-bottom-panel__tab ${
-                              state.settings.workspace.bottomPanel === "snippets" ? "is-active" : ""
-                            }`}
-                            onClick={() => void controller.selectBottomPanel("snippets")}
-                          >
-                            {t("workspace.action.snippets")}
-                          </button>
-                        </div>
-                        <div className="workspace-bottom-panel__content">
-                          {state.settings.workspace.bottomPanel === "files" ? (
-                            <FilePanel
-                              currentPath={activeSession?.currentPath ?? null}
-                              entries={state.remoteEntries}
-                              rootEntries={state.remoteRootEntries}
-                              layoutScale={workspaceScale}
-                              loading={state.remoteEntriesLoading}
-                              onOpenDirectory={controller.openRemoteDirectory}
-                              onGoParent={controller.goRemoteParent}
-                              onRefresh={controller.refreshRemoteEntriesForActiveSession}
-                              onUpload={controller.uploadFileToCurrentDirectory}
-                              onCreateDirectory={controller.createRemoteDirectory}
-                              onDownload={controller.downloadRemoteFile}
-                              onRename={controller.renameRemoteEntry}
-                              onDelete={controller.deleteRemoteEntry}
-                            />
-                          ) : (
-                            <SnippetPanel controller={controller} />
-                          )}
-                        </div>
-                      </section>
-                    </>
-                  ) : null}
-                </div>
-              </main>
-
-              {sidePanelVisible ? (
-                <aside className="workspace-right">
-                  {state.settings.workspace.sidePanel === "transfers" ? (
-                    <TransferPanel
-                      tasks={state.transfers}
-                      onRetry={controller.retryTransfer}
-                      onClearCompleted={controller.clearCompletedTransfers}
-                    />
-                  ) : null}
-                  {state.settings.workspace.sidePanel === "activity" ? (
-                    <section className="panel">
-                      <header className="panel__header">
-                        <div>
-                          <p className="panel__eyebrow">{t("workspace.panel.activity")}</p>
-                          <h2 className="panel__title">{t("workspace.panel.activitySubtitle")}</h2>
-                        </div>
-                      </header>
-                      <div className="panel__body">
-                        <div className="activity-list">
-                          {state.activity.map((item) => (
-                            <article className="activity-row" key={item.id}>
-                              <strong>{item.title}</strong>
-                              <span>{formatTimestamp(item.timestamp)}</span>
-                            </article>
-                          ))}
-                        </div>
-                      </div>
-                    </section>
-                  ) : null}
-
-                  <section className="panel panel--compact">
-                    <header className="panel__header">
-                      <div>
-                        <p className="panel__eyebrow">{t("workspace.panel.extensions")}</p>
-                        <h2 className="panel__title">{t("workspace.panel.extensionsSubtitle")}</h2>
-                      </div>
-                    </header>
-                    <div className="panel__body">
-                      <div className="extension-list">
-                        {state.extensions.map((extension) => (
-                          <article className="extension-row" key={extension.id}>
-                            <strong>{extension.title}</strong>
-                            <p>{extension.kind}</p>
-                          </article>
-                        ))}
-                      </div>
-                    </div>
-                  </section>
-                </aside>
-              ) : null}
-            </div>
-
-            <footer className="workspace-footer">
-              <div className="button-row">
-                <button className="ghost-button" onClick={() => void controller.selectSidePanel("activity")} type="button">
-                  {t("workspace.action.activity")}
-                </button>
-                <button className="ghost-button" onClick={() => void controller.selectSidePanel("transfers")} type="button">
-                  {t("workspace.action.transfers")}
-                </button>
-              </div>
-              <div className="button-row">
-                <button className="ghost-button" onClick={() => void controller.resetSettings()} type="button">
-                  {t("workspace.action.resetSettings")}
-                </button>
-                <span>
-                  {t("workspace.currentTheme", {
-                    theme: t(`workspace.theme.${state.settings.terminal.theme}`),
-                  })}
-                </span>
-              </div>
-            </footer>
-    </div>
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+    },
+    [bottomPaneHeight, controller],
   );
+
+  const toolbarStyle = themeDefinition.variables as CSSProperties;
 
   return (
-    <div className="workspace-stage" ref={stageRef} style={themeDefinition.variables as CSSProperties}>
-      {workspaceScale < 1 ? (
-        <div
-          className="workspace-stage__viewport workspace-stage__viewport--scaled"
-          style={{
-            width: `${WORKSPACE_BASE_WIDTH * workspaceScale}px`,
-            height: `${WORKSPACE_BASE_HEIGHT * workspaceScale}px`,
-          }}
-        >
-          <div
-            className="workspace-stage__scale workspace-stage__scale--scaled"
-            style={{
-              width: `${WORKSPACE_BASE_WIDTH}px`,
-              height: `${WORKSPACE_BASE_HEIGHT}px`,
-              transform: `scale(${workspaceScale})`,
-            }}
+    <div className="workspace-shell" style={toolbarStyle}>
+      <header className="workspace-toolbar">
+        <div className="button-row workspace-toolbar__left">
+          <button
+            className="ghost-button toolbar-button"
+            onClick={() => setCreateRequestKey((current) => current + 1)}
+            type="button"
           >
-            {workspaceContent}
+            {t("toolbar.newConnection")}
+          </button>
+          <button
+            className="ghost-button toolbar-button"
+            onClick={() => setCreateRequestKey((current) => current + 1)}
+            type="button"
+          >
+            {t("toolbar.quickConnect")}
+          </button>
+          <input
+            aria-label={t("toolbar.searchPlaceholder")}
+            className="workspace-toolbar__search"
+            onChange={(event) => setToolbarSearch(event.target.value)}
+            placeholder={t("toolbar.searchPlaceholder")}
+            value={toolbarSearch}
+          />
+        </div>
+
+        <div className="button-row workspace-toolbar__right">
+          <button
+            className="ghost-button toolbar-button"
+            disabled={!activeSession}
+            onClick={() => {
+              void controller.selectBottomPanel("files");
+              void controller.uploadFileToCurrentDirectory();
+            }}
+            type="button"
+          >
+            {t("toolbar.upload")}
+          </button>
+          <button
+            className="ghost-button toolbar-button"
+            onClick={() => void controller.selectBottomPanel("files")}
+            type="button"
+          >
+            {t("toolbar.files")}
+          </button>
+          <button
+            className="ghost-button toolbar-button"
+            onClick={() => void controller.selectBottomPanel("snippets")}
+            type="button"
+          >
+            {t("toolbar.snippets")}
+          </button>
+          <button
+            className="ghost-button toolbar-button"
+            onClick={() => void controller.selectBottomPanel("logs")}
+            type="button"
+          >
+            {t("toolbar.logs")}
+          </button>
+          <div className="workspace-toolbar__settings">
+            <button
+              className="ghost-button toolbar-button"
+              onClick={() => setSettingsOpen((current) => !current)}
+              type="button"
+            >
+              {t("toolbar.settings")}
+            </button>
+            {settingsOpen ? (
+              <div className="workspace-toolbar__settings-menu">
+                <label>
+                  <span>{t("terminal.themeLabel")}</span>
+                  <select
+                    aria-label={t("terminal.themeLabel")}
+                    onChange={(event) => void controller.updateTheme(event.target.value as ThemeId)}
+                    value={state.settings.terminal.theme}
+                  >
+                    <option value="midnight">{t("workspace.theme.midnight")}</option>
+                    <option value="sand">{t("workspace.theme.sand")}</option>
+                    <option value="jade">{t("workspace.theme.jade")}</option>
+                    <option value="tide">{t("workspace.theme.tide")}</option>
+                    <option value="graphite">{t("workspace.theme.graphite")}</option>
+                  </select>
+                </label>
+                <button className="ghost-button toolbar-button" onClick={() => void controller.resetSettings()} type="button">
+                  {t("workspace.action.resetSettings")}
+                </button>
+                {localeState.hasPendingLocaleHook ? (
+                  <span className="workspace-toolbar__locale-hint">
+                    {t("locale.pendingHook", { locale: localeState.systemLocale })}
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
           </div>
         </div>
-      ) : (
-        <div className="workspace-stage__fill">{workspaceContent}</div>
-      )}
+      </header>
+
+      {state.error ? <div className="error-banner">{state.error}</div> : null}
+
+      <div className="workspace-layout">
+        {state.settings.workspace.leftPaneVisible ? (
+          <>
+            <aside className="workspace-pane workspace-pane--left" style={{ width: `${leftPaneWidth}px` }}>
+              <ConnectionSidebar
+                controller={controller}
+                createRequestKey={createRequestKey}
+                onSearchTermChange={setToolbarSearch}
+                searchTerm={toolbarSearch}
+              />
+            </aside>
+            <div
+              aria-orientation="vertical"
+              className="workspace-splitter workspace-splitter--vertical"
+              onPointerDown={handleLeftSplitPointerDown}
+              role="separator"
+            />
+          </>
+        ) : null}
+
+        <main className="workspace-center">
+          <section className="workspace-terminal-pane">
+            <TerminalWorkspace controller={controller} />
+          </section>
+
+          {state.settings.workspace.bottomPaneVisible ? (
+            <>
+              <div
+                aria-orientation="horizontal"
+                className="workspace-splitter workspace-splitter--horizontal"
+                onPointerDown={handleBottomSplitPointerDown}
+                role="separator"
+              />
+              <section className="workspace-bottom-pane" style={{ height: `${bottomPaneHeight}px` }}>
+                <div className="workspace-tools">
+                  <div className="workspace-tools__tabs" role="tablist">
+                    {(["files", "snippets", "history", "logs"] as const).map((panelId) => (
+                      <button
+                        aria-selected={state.settings.workspace.bottomPane === panelId}
+                        className={`workspace-tools__tab ${
+                          state.settings.workspace.bottomPane === panelId ? "is-active" : ""
+                        }`}
+                        key={panelId}
+                        onClick={() => void controller.selectBottomPanel(panelId)}
+                        role="tab"
+                        type="button"
+                      >
+                        {t(`workspace.action.${panelId}`)}
+                      </button>
+                    ))}
+                    <button
+                      className="ghost-button toolbar-button workspace-tools__close"
+                      onClick={() => void controller.toggleBottomPanel()}
+                      type="button"
+                    >
+                      {t("terminal.toggleBottomPanel")}
+                    </button>
+                  </div>
+
+                  <div className="workspace-tools__content">
+                    {state.settings.workspace.bottomPane === "files" ? (
+                      <div className="workspace-files-panel">
+                        <FilePanel
+                          currentPath={activeSession?.currentPath ?? null}
+                          entries={state.remoteEntries}
+                          loading={state.remoteEntriesLoading}
+                          onCreateDirectory={controller.createRemoteDirectory}
+                          onDelete={controller.deleteRemoteEntry}
+                          onDownload={controller.downloadRemoteFile}
+                          onGoParent={controller.goRemoteParent}
+                          onOpenDirectory={controller.openRemoteDirectory}
+                          onRefresh={controller.refreshRemoteEntriesForActiveSession}
+                          onRename={controller.renameRemoteEntry}
+                          onUpload={controller.uploadFileToCurrentDirectory}
+                          rootEntries={state.remoteRootEntries}
+                        />
+                        {state.transfers.length > 0 ? (
+                          <div className="workspace-files-panel__transfers">
+                            <TransferPanel
+                              onClearCompleted={controller.clearCompletedTransfers}
+                              onRetry={controller.retryTransfer}
+                              tasks={state.transfers}
+                            />
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
+                    {state.settings.workspace.bottomPane === "snippets" ? (
+                      <SnippetPanel controller={controller} />
+                    ) : null}
+                    {state.settings.workspace.bottomPane === "history" ? (
+                      <HistoryPanel controller={controller} />
+                    ) : null}
+                    {state.settings.workspace.bottomPane === "logs" ? (
+                      <LogPanel controller={controller} />
+                    ) : null}
+                  </div>
+                </div>
+              </section>
+            </>
+          ) : null}
+        </main>
+      </div>
     </div>
   );
 }

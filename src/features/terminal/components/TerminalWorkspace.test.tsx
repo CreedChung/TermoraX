@@ -136,6 +136,7 @@ function buildState(session: SessionTab | null): WorkspaceViewState {
     error: null,
     selectedConnectionId: null,
     activeSessionId: session?.id ?? null,
+    commandHistory: [],
     remoteEntries: [],
     remoteRootEntries: [],
     remoteEntriesLoading: false,
@@ -187,8 +188,9 @@ function createController(session: SessionTab | null = sampleSession, overrides?
     saveSettings: vi.fn(),
     selectBottomPanel: vi.fn(),
     toggleBottomPanel: vi.fn(),
-    selectSidePanel: vi.fn(),
-    toggleSidePanel: vi.fn(),
+    toggleLeftPane: vi.fn(),
+    setLeftPaneWidth: vi.fn(),
+    setBottomPaneHeight: vi.fn(),
     updateTheme: vi.fn(),
     resetSettings: vi.fn(),
   };
@@ -286,11 +288,11 @@ describe("TerminalWorkspace", () => {
   test("renders theme selector and panel toggles", async () => {
     const updateTheme = vi.fn();
     const toggleBottomPanel = vi.fn();
-    const toggleSidePanel = vi.fn();
+    const toggleLeftPane = vi.fn();
     const controller = createController(sampleSession, {
       updateTheme,
       toggleBottomPanel,
-      toggleSidePanel,
+      toggleLeftPane,
     });
 
     render(<TerminalWorkspace controller={controller} />);
@@ -302,7 +304,7 @@ describe("TerminalWorkspace", () => {
 
     expect(updateTheme).toHaveBeenCalledWith("sand");
     expect(toggleBottomPanel).toHaveBeenCalledTimes(1);
-    expect(toggleSidePanel).toHaveBeenCalledTimes(1);
+    expect(toggleLeftPane).toHaveBeenCalledTimes(1);
   });
 
   test("keeps terminal output instance alive when the theme changes", () => {

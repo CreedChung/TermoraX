@@ -74,6 +74,7 @@ function createController(overrides?: Partial<WorkspaceController>): WorkspaceCo
       error: null,
       selectedConnectionId: "conn-1",
       activeSessionId: null,
+      commandHistory: [],
       remoteEntries: [],
       remoteRootEntries: [],
       remoteEntriesLoading: false,
@@ -119,8 +120,9 @@ function createController(overrides?: Partial<WorkspaceController>): WorkspaceCo
     saveSettings: async () => undefined,
     selectBottomPanel: async () => undefined,
     toggleBottomPanel: async () => undefined,
-    selectSidePanel: async () => undefined,
-    toggleSidePanel: async () => undefined,
+    toggleLeftPane: async () => undefined,
+    setLeftPaneWidth: async () => undefined,
+    setBottomPaneHeight: async () => undefined,
     updateTheme: async () => undefined,
     resetSettings: async () => undefined,
   };
@@ -164,7 +166,8 @@ describe("ConnectionSidebar", () => {
     const user = userEvent.setup();
     render(<ConnectionSidebar controller={createController()} />);
 
-    await user.click(screen.getAllByRole("button", { name: "删除" })[0]);
+    await user.click(screen.getByRole("button", { name: "编辑连接" }));
+    await user.click(screen.getByRole("button", { name: "删除" }));
 
     expect(screen.getByText("确认删除连接配置")).toBeInTheDocument();
     expect(screen.getByText("删除后将同时移除关联会话。此操作不可撤销。")).toBeInTheDocument();
@@ -190,6 +193,8 @@ describe("ConnectionSidebar", () => {
     });
 
     render(<ConnectionSidebar controller={controller} />);
+
+    await user.click(screen.getByRole("button", { name: "编辑连接" }));
 
     expect(screen.getByText("请确认主机指纹")).toBeInTheDocument();
     expect(screen.getByText("指纹：SHA256:test")).toBeInTheDocument();

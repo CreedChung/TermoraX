@@ -1909,10 +1909,11 @@ mod tests {
 
         assert!(store.persisted.trusted_hosts.is_empty());
         assert_eq!(store.persisted.settings.terminal.theme, "midnight");
-        assert_eq!(store.persisted.settings.workspace.bottom_panel, "files");
-        assert!(store.persisted.settings.workspace.bottom_panel_visible);
-        assert_eq!(store.persisted.settings.workspace.side_panel, "activity");
-        assert!(store.persisted.settings.workspace.side_panel_visible);
+        assert!(store.persisted.settings.workspace.left_pane_visible);
+        assert_eq!(store.persisted.settings.workspace.left_pane_width, 240);
+        assert_eq!(store.persisted.settings.workspace.bottom_pane, "files");
+        assert!(store.persisted.settings.workspace.bottom_pane_visible);
+        assert_eq!(store.persisted.settings.workspace.bottom_pane_height, 200);
     }
 
     #[test]
@@ -1945,10 +1946,11 @@ mod tests {
         let store = AppStore::load(dir).expect("legacy state should load");
 
         assert_eq!(store.persisted.settings.terminal.theme, "midnight");
-        assert_eq!(store.persisted.settings.workspace.bottom_panel, "snippets");
-        assert!(store.persisted.settings.workspace.bottom_panel_visible);
-        assert_eq!(store.persisted.settings.workspace.side_panel, "activity");
-        assert!(store.persisted.settings.workspace.side_panel_visible);
+        assert!(store.persisted.settings.workspace.left_pane_visible);
+        assert_eq!(store.persisted.settings.workspace.left_pane_width, 240);
+        assert_eq!(store.persisted.settings.workspace.bottom_pane, "snippets");
+        assert!(store.persisted.settings.workspace.bottom_pane_visible);
+        assert_eq!(store.persisted.settings.workspace.bottom_pane_height, 200);
     }
 
     #[test]

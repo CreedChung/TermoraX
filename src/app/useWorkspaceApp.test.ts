@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SessionTab } from "../entities/domain";
-import { mergeSnapshotSessions, updateSessionTerminalSize } from "./useWorkspaceApp";
+import { collectCommandHistoryEntries, mergeSnapshotSessions, updateSessionTerminalSize } from "./useWorkspaceApp";
 
 function session(overrides?: Partial<SessionTab>): SessionTab {
   return {
@@ -85,5 +85,21 @@ describe("updateSessionTerminalSize", () => {
     const updated = updateSessionTerminalSize(sessions, "session-1", 120, 32);
 
     expect(updated).toBe(sessions);
+  });
+});
+
+describe("collectCommandHistoryEntries", () => {
+  it("extracts completed commands when enter is received", () => {
+    const result = collectCommandHistoryEntries("docker ps", "\r");
+
+    expect(result.nextDraft).toBe("");
+    expect(result.commands).toEqual(["docker ps"]);
+  });
+
+  it("tracks editable drafts and handles backspace", () => {
+    const result = collectCommandHistoryEntries("kubectl get podss", "\u007f\r");
+
+    expect(result.nextDraft).toBe("");
+    expect(result.commands).toEqual(["kubectl get pods"]);
   });
 });

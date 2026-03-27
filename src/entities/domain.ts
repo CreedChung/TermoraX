@@ -6,8 +6,7 @@ export type ExtensionKind =
   | "commandPaletteItem"
   | "connectionProtocol";
 export type ThemeId = "midnight" | "sand" | "jade" | "tide" | "graphite";
-export type BottomPanelId = "files" | "snippets";
-export type SidePanelId = "activity" | "transfers";
+export type BottomPanelId = "files" | "snippets" | "history" | "logs";
 
 export interface ConnectionProfile {
   id: string;
@@ -158,11 +157,11 @@ export interface TerminalPreferences {
 }
 
 export interface WorkspaceLayout {
-  sidebarCollapsed: boolean;
-  bottomPanel: BottomPanelId;
-  bottomPanelVisible: boolean;
-  sidePanel: SidePanelId;
-  sidePanelVisible: boolean;
+  leftPaneVisible: boolean;
+  leftPaneWidth: number;
+  bottomPane: BottomPanelId;
+  bottomPaneVisible: boolean;
+  bottomPaneHeight: number;
 }
 
 export interface AppSettings {

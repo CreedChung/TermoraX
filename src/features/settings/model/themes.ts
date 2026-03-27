@@ -1,4 +1,5 @@
-import type { AppSettings, BottomPanelId, SidePanelId, ThemeId } from "../../../entities/domain";
+import type { AppSettings, BottomPanelId, ThemeId } from "../../../entities/domain";
+import { defaultAppSettings } from "./defaults";
 
 type CssThemeVariables = Partial<Record<`--${string}`, string>>;
 
@@ -217,14 +218,52 @@ export function normalizeThemeId(themeId: string | null | undefined): ThemeId {
 }
 
 export function normalizeBottomPanelId(panelId: string | null | undefined): BottomPanelId {
-  return panelId === "snippets" ? "snippets" : "files";
-}
-
-export function normalizeSidePanelId(panelId: string | null | undefined): SidePanelId {
-  return panelId === "transfers" ? "transfers" : "activity";
+  switch (panelId) {
+    case "snippets":
+      return "snippets";
+    case "history":
+      return "history";
+    case "logs":
+      return "logs";
+    default:
+      return "files";
+  }
 }
 
 export function normalizeAppSettings(settings: AppSettings): AppSettings {
+  const workspaceRecord = settings.workspace as unknown as Record<string, unknown>;
+  const leftPaneVisible =
+    typeof workspaceRecord.leftPaneVisible === "boolean"
+      ? workspaceRecord.leftPaneVisible
+      : typeof workspaceRecord.sidebarCollapsed === "boolean"
+        ? !workspaceRecord.sidebarCollapsed
+        : defaultAppSettings.workspace.leftPaneVisible;
+  const leftPaneWidth =
+    typeof workspaceRecord.leftPaneWidth === "number" && Number.isFinite(workspaceRecord.leftPaneWidth)
+      ? Math.min(Math.max(workspaceRecord.leftPaneWidth, 200), 320)
+      : defaultAppSettings.workspace.leftPaneWidth;
+  const bottomPaneHeight =
+    typeof workspaceRecord.bottomPaneHeight === "number" && Number.isFinite(workspaceRecord.bottomPaneHeight)
+      ? Math.min(Math.max(workspaceRecord.bottomPaneHeight, 160), 320)
+      : defaultAppSettings.workspace.bottomPaneHeight;
+  const bottomPaneVisible =
+    typeof workspaceRecord.bottomPaneVisible === "boolean"
+      ? workspaceRecord.bottomPaneVisible
+      : typeof workspaceRecord.bottomPanelVisible === "boolean"
+        ? workspaceRecord.bottomPanelVisible
+        : typeof workspaceRecord.rightPanelVisible === "boolean"
+          ? workspaceRecord.rightPanelVisible
+          : defaultAppSettings.workspace.bottomPaneVisible;
+  const bottomPane = normalizeBottomPanelId(
+    typeof workspaceRecord.bottomPane === "string"
+      ? workspaceRecord.bottomPane
+      : typeof workspaceRecord.bottomPanel === "string"
+        ? workspaceRecord.bottomPanel
+        : typeof workspaceRecord.rightPanel === "string"
+          ? workspaceRecord.rightPanel
+          : defaultAppSettings.workspace.bottomPane,
+  );
+
   return {
     ...settings,
     terminal: {
@@ -232,11 +271,11 @@ export function normalizeAppSettings(settings: AppSettings): AppSettings {
       theme: normalizeThemeId(settings.terminal.theme),
     },
     workspace: {
-      ...settings.workspace,
-      bottomPanel: normalizeBottomPanelId(settings.workspace.bottomPanel),
-      bottomPanelVisible: settings.workspace.bottomPanelVisible !== false,
-      sidePanel: normalizeSidePanelId(settings.workspace.sidePanel),
-      sidePanelVisible: settings.workspace.sidePanelVisible !== false,
+      leftPaneVisible,
+      leftPaneWidth,
+      bottomPane,
+      bottomPaneVisible,
+      bottomPaneHeight,
     },
   };
 }

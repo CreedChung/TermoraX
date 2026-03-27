@@ -32,6 +32,7 @@ function buildState(overrides?: Partial<WorkspaceViewState>): WorkspaceViewState
     error: null,
     selectedConnectionId: null,
     activeSessionId: null,
+    commandHistory: [],
     remoteEntries: [],
     remoteRootEntries: [],
     remoteEntriesLoading: false,
@@ -84,8 +85,9 @@ function createController(overrides?: Partial<WorkspaceController>): WorkspaceCo
     saveSettings: vi.fn(),
     selectBottomPanel: vi.fn(),
     toggleBottomPanel: vi.fn(),
-    selectSidePanel: vi.fn(),
-    toggleSidePanel: vi.fn(),
+    toggleLeftPane: vi.fn(),
+    setLeftPaneWidth: vi.fn(),
+    setBottomPaneHeight: vi.fn(),
     updateTheme: vi.fn(),
     resetSettings: vi.fn(),
   };
@@ -101,7 +103,8 @@ describe("WorkspaceShell", () => {
           ...defaultAppSettings,
           workspace: {
             ...defaultAppSettings.workspace,
-            bottomPanel: "snippets",
+            bottomPane: "snippets",
+            bottomPaneVisible: true,
           },
         },
       }),
@@ -117,7 +120,18 @@ describe("WorkspaceShell", () => {
   it("dispatches bottom tab selection", async () => {
     const user = userEvent.setup();
     const selectBottomPanel = vi.fn();
-    const controller = createController({ selectBottomPanel });
+    const controller = createController({
+      selectBottomPanel,
+      state: buildState({
+        settings: {
+          ...defaultAppSettings,
+          workspace: {
+            ...defaultAppSettings.workspace,
+            bottomPaneVisible: true,
+          },
+        },
+      }),
+    });
 
     render(<WorkspaceShell controller={controller} />);
     await user.click(screen.getByRole("tab", { name: "片段" }));
