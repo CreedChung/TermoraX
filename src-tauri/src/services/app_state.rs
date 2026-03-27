@@ -68,6 +68,7 @@ enum SessionUiEvent {
 
 const SESSION_EVENT_FLUSH_DELAY_MS: u64 = 33;
 const MAX_BATCHED_SESSION_OUTPUT_CHARS: usize = 16 * 1024;
+const SESSION_LOG_PREVIEW_CHARS: usize = 120;
 
 /// Shared backend state managed by Tauri.
 pub struct AppState {
@@ -226,12 +227,20 @@ impl AppState {
                 sessions::DEFAULT_TERMINAL_COLS,
                 sessions::DEFAULT_TERMINAL_ROWS,
             ))?;
-        let (session_id, reader_generation) = {
+        let (snapshot, session_id, reader_generation) = {
             let mut store = self.store.lock()?;
             let session_id =
                 store.open_live_session(&connection, opened.connection, opened.writer)?;
             let reader_generation = store.current_reader_generation(&session_id)?;
-            (session_id, reader_generation)
+            let snapshot = store.snapshot();
+            debug_log(
+                "open_session.snapshot_return",
+                format!(
+                    "session_id={session_id} reader_generation={reader_generation} {}",
+                    describe_snapshot_session(&snapshot, &session_id)
+                ),
+            );
+            (snapshot, session_id, reader_generation)
         };
 
         self.spawn_session_reader(
@@ -240,7 +249,7 @@ impl AppState {
             reader_generation,
             opened.reader,
         );
-        self.snapshot()
+        Ok(snapshot)
     }
 
     pub fn close_session(&self, session_id: &str) -> AppResult<BootstrapState> {
@@ -322,7 +331,7 @@ impl AppState {
             "reconnect_session.open_new.done",
             format!("session_id={session_id}"),
         );
-        let reader_generation = {
+        let (snapshot, reader_generation) = {
             let mut store = self.store.lock()?;
             store.reconnect_live_session(
                 session_id,
@@ -330,7 +339,16 @@ impl AppState {
                 opened.connection,
                 opened.writer,
             )?;
-            store.current_reader_generation(session_id)?
+            let reader_generation = store.current_reader_generation(session_id)?;
+            let snapshot = store.snapshot();
+            debug_log(
+                "reconnect_session.snapshot_return",
+                format!(
+                    "session_id={session_id} reader_generation={reader_generation} {}",
+                    describe_snapshot_session(&snapshot, session_id)
+                ),
+            );
+            (snapshot, reader_generation)
         };
 
         self.spawn_session_reader(
@@ -343,7 +361,7 @@ impl AppState {
             "reconnect_session.done",
             format!("session_id={session_id} reader_generation={reader_generation}"),
         );
-        self.snapshot()
+        Ok(snapshot)
     }
 
     /// Clears the tracked output buffer for a session.
@@ -643,6 +661,13 @@ impl AppState {
                 let Some(message) = next_message else {
                     break;
                 };
+                debug_log(
+                    "session_reader.chunk",
+                    format!(
+                        "session_id={session_id} reader_generation={reader_generation} {}",
+                        describe_channel_message(&message)
+                    ),
+                );
 
                 let payload = match store.lock() {
                     Ok(mut guard) => {
@@ -911,14 +936,19 @@ impl AppStore {
         let session = sessions::open_connected_session(
             connection,
             session_title,
-            format!(
-                "已连接到 {}@{}:{}\r\n\r\n",
-                connection.username, connection.host, connection.port
-            ),
+            live_session_initial_output(connection),
             sessions::DEFAULT_TERMINAL_COLS,
             sessions::DEFAULT_TERMINAL_ROWS,
         );
         let session_id = session.id.clone();
+        debug_log(
+            "open_session.snapshot_seed",
+            format!(
+                "session_id={session_id} len={} preview={}",
+                session.last_output.len(),
+                preview_log_text(&session.last_output)
+            ),
+        );
         self.runtimes.insert(
             session_id.clone(),
             LiveSessionRuntime {
@@ -958,13 +988,15 @@ impl AppStore {
                 .find(|item| item.id == session_id)
                 .ok_or_else(|| AppError::new("session_not_found", session_id.to_string()))?;
             let session_title = session.title.clone();
-            session.status = "connected".into();
-            session.current_path = Some("/".into());
-            session.last_output = format!(
-                "已重新连接到 {}@{}:{}\r\n\r\n",
-                connection.username, connection.host, connection.port
+            reset_live_session_for_reconnect(session, connection);
+            debug_log(
+                "reconnect_session.snapshot_seed",
+                format!(
+                    "session_id={session_id} len={} preview={}",
+                    session.last_output.len(),
+                    preview_log_text(&session.last_output)
+                ),
             );
-            session.updated_at = now_iso();
             session_title
         };
         self.runtimes.insert(
@@ -1501,6 +1533,107 @@ fn now_iso() -> String {
         .unwrap_or_else(|_| "0".into())
 }
 
+fn live_session_initial_output(connection: &ConnectionProfile) -> String {
+    format!(
+        "已连接到 {}@{}:{}\r\n\r\n",
+        connection.username, connection.host, connection.port
+    )
+}
+
+fn reset_live_session_for_reconnect(session: &mut SessionTab, connection: &ConnectionProfile) {
+    session.status = "connected".into();
+    session.current_path = Some("/".into());
+    session.last_output = format!(
+        "已重新连接到 {}@{}:{}\r\n\r\n",
+        connection.username, connection.host, connection.port
+    );
+    session.updated_at = now_iso();
+}
+
+fn preview_log_text(value: &str) -> String {
+    let sanitized = value.replace('\r', "\\r").replace('\n', "\\n");
+    let mut chars = sanitized.chars();
+    let preview = chars
+        .by_ref()
+        .take(SESSION_LOG_PREVIEW_CHARS)
+        .collect::<String>();
+
+    if chars.next().is_some() {
+        format!("{preview}...")
+    } else {
+        preview
+    }
+}
+
+fn describe_channel_message(message: &ChannelMsg) -> String {
+    match message {
+        ChannelMsg::Data { data } => {
+            let chunk = String::from_utf8_lossy(data);
+            format!(
+                "kind=data len={} preview={}",
+                chunk.len(),
+                preview_log_text(&chunk)
+            )
+        }
+        ChannelMsg::ExtendedData { data, .. } => {
+            let chunk = String::from_utf8_lossy(data);
+            format!(
+                "kind=extended_data len={} preview={}",
+                chunk.len(),
+                preview_log_text(&chunk)
+            )
+        }
+        ChannelMsg::ExitStatus { exit_status } => {
+            format!("kind=exit_status status={exit_status}")
+        }
+        ChannelMsg::ExitSignal {
+            signal_name,
+            error_message,
+            ..
+        } => format!(
+            "kind=exit_signal signal={:?} preview={}",
+            signal_name,
+            preview_log_text(error_message)
+        ),
+        ChannelMsg::Close => "kind=close".into(),
+        ChannelMsg::Eof => "kind=eof".into(),
+        _ => "kind=other".into(),
+    }
+}
+
+fn describe_session_ui_event(event: &SessionUiEvent) -> String {
+    match event {
+        SessionUiEvent::Output(payload) => format!(
+            "kind=output session_id={} stream={} len={} occurred_at={} preview={}",
+            payload.session_id,
+            payload.stream,
+            payload.chunk.len(),
+            payload.occurred_at,
+            preview_log_text(&payload.chunk)
+        ),
+        SessionUiEvent::Status(payload) => format!(
+            "kind=status session_id={} status={} occurred_at={} message_len={} preview={}",
+            payload.session_id,
+            payload.status,
+            payload.occurred_at,
+            payload.message.as_ref().map(|message| message.len()).unwrap_or(0),
+            preview_log_text(payload.message.as_deref().unwrap_or_default())
+        ),
+    }
+}
+
+fn describe_snapshot_session(snapshot: &BootstrapState, session_id: &str) -> String {
+    match snapshot.sessions.iter().find(|session| session.id == session_id) {
+        Some(session) => format!(
+            "snapshot_updated_at={} len={} preview={}",
+            session.updated_at,
+            session.last_output.len(),
+            preview_log_text(&session.last_output)
+        ),
+        None => "snapshot_session=missing".into(),
+    }
+}
+
 fn debug_log(event: &str, message: impl AsRef<str>) {
     if cfg!(debug_assertions) {
         println!(
@@ -1576,6 +1709,7 @@ fn parent_remote_path(path: &str) -> String {
 }
 
 fn emit_session_event(app_handle: &AppHandle, event: SessionUiEvent) {
+    debug_log("session_event.emit", describe_session_ui_event(&event));
     match event {
         SessionUiEvent::Output(payload) => {
             let _ = app_handle.emit(SESSION_EVENT, payload);
@@ -1627,12 +1761,12 @@ mod tests {
 
     use super::{
         build_host_fingerprint_inspection, ensure_trust_request_matches,
-        merge_pending_output_event, parent_remote_path, AppState, AppStore,
-        MAX_BATCHED_SESSION_OUTPUT_CHARS,
+        live_session_initial_output, merge_pending_output_event, parent_remote_path,
+        reset_live_session_for_reconnect, AppState, AppStore, MAX_BATCHED_SESSION_OUTPUT_CHARS,
     };
     use crate::{
         events::SessionOutputEventPayload,
-        models::{ConnectionProfile, TrustedHost},
+        models::{ConnectionProfile, SessionTab, TrustedHost},
         services::ssh::InspectedSshHostKey,
     };
 
@@ -1678,6 +1812,22 @@ mod tests {
         }
     }
 
+    fn session_tab() -> SessionTab {
+        SessionTab {
+            id: "session-1".into(),
+            connection_id: "conn-1".into(),
+            title: "测试会话".into(),
+            protocol: "ssh".into(),
+            status: "disconnected".into(),
+            current_path: Some("/home/demo".into()),
+            last_output: "welcome\r\nold prompt".into(),
+            terminal_cols: 120,
+            terminal_rows: 32,
+            created_at: "1".into(),
+            updated_at: "1".into(),
+        }
+    }
+
     #[test]
     fn app_state_imports_and_exports_profiles() {
         let dir = temp_config_dir("import-export");
@@ -1695,6 +1845,26 @@ mod tests {
         assert_eq!(import_result.imported, 1);
         assert_eq!(exported.count, 3);
         assert!(exported.content.contains("conn-test-import"));
+    }
+
+    #[test]
+    fn live_session_initial_output_includes_local_connection_message() {
+        assert_eq!(
+            live_session_initial_output(&profile("conn-live-session")),
+            "已连接到 root@10.0.0.1:22\r\n\r\n"
+        );
+    }
+
+    #[test]
+    fn reset_live_session_for_reconnect_reseeds_local_connection_message() {
+        let mut session = session_tab();
+
+        reset_live_session_for_reconnect(&mut session, &profile("conn-live-session"));
+
+        assert_eq!(session.status, "connected");
+        assert_eq!(session.current_path.as_deref(), Some("/"));
+        assert_eq!(session.last_output, "已重新连接到 root@10.0.0.1:22\r\n\r\n");
+        assert_ne!(session.updated_at, "1");
     }
 
     #[test]

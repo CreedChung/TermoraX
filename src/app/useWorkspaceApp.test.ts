@@ -51,7 +51,7 @@ describe("mergeSnapshotSessions", () => {
       session({
         status: "connected",
         currentPath: "/",
-        lastOutput: "已重新连接到 demo@example:22\r\n\r\n[TermoraX] 真实 SSH 终端已恢复。",
+        lastOutput: "",
         updatedAt: "7",
       }),
     ];

@@ -30,6 +30,7 @@ import {
 } from "../shared/lib/connections";
 import { createId } from "../shared/lib/id";
 import { t } from "../shared/i18n";
+import { debugLog } from "../shared/lib/debug";
 import { applySessionOutputEvents, applySessionSnapshotOutputs } from "./sessionOutputStore";
 import { mergeSessionEventMetadata } from "./sessionEvents";
 
@@ -74,6 +75,15 @@ const initialState: WorkspaceState = {
 
 const SESSION_EVENT_FLUSH_DELAY_MS = 33;
 const REMOTE_PANEL_IDLE_REFRESH_DELAY_MS = 1200;
+const SESSION_OUTPUT_DEBUG_FLAG = "termorax-debug-session-output";
+const SESSION_OUTPUT_PREVIEW_CHARS = 120;
+
+function previewOutput(value: string): string {
+  const sanitized = value.replace(/\r/g, "\\r").replace(/\n/g, "\\n");
+  return sanitized.length > SESSION_OUTPUT_PREVIEW_CHARS
+    ? `${sanitized.slice(0, SESSION_OUTPUT_PREVIEW_CHARS)}...`
+    : sanitized;
+}
 
 function deriveNextSelection(snapshot: BootstrapState, currentConnectionId: string | null, currentSessionId: string | null) {
   const selectedConnectionId =
@@ -281,6 +291,15 @@ export function useWorkspaceApp() {
   }
 
   function applySnapshot(snapshot: BootstrapState) {
+    debugLog(SESSION_OUTPUT_DEBUG_FLAG, "workspace.snapshot_apply", {
+      sessionCount: snapshot.sessions.length,
+      sessions: snapshot.sessions.map((session) => ({
+        sessionId: session.id,
+        updatedAt: session.updatedAt,
+        textLength: session.lastOutput.length,
+        preview: previewOutput(session.lastOutput),
+      })),
+    });
     applySessionSnapshotOutputs(snapshot.sessions);
 
     startTransition(() => {
@@ -389,6 +408,28 @@ export function useWorkspaceApp() {
         return;
       }
 
+      debugLog(SESSION_OUTPUT_DEBUG_FLAG, "workspace.session_events_flush", {
+        count: events.length,
+        sessions: events.map((event) =>
+          event.kind === "output"
+            ? {
+                sessionId: event.sessionId,
+                kind: event.kind,
+                stream: event.stream,
+                occurredAt: event.occurredAt,
+                deltaLength: event.chunk.length,
+                preview: previewOutput(event.chunk),
+              }
+            : {
+                sessionId: event.sessionId,
+                kind: event.kind,
+                status: event.status,
+                occurredAt: event.occurredAt,
+                deltaLength: event.message?.length ?? 0,
+                preview: previewOutput(event.message ?? ""),
+              },
+        ),
+      });
       applySessionOutputEvents(events);
 
       setState((current) => {

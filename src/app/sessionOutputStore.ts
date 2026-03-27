@@ -1,6 +1,9 @@
 import type { SessionEvent, SessionTab } from "../entities/domain";
+import { debugLog } from "../shared/lib/debug";
 
 const MAX_SESSION_OUTPUT_CHARS = 200_000;
+const SESSION_OUTPUT_DEBUG_FLAG = "termorax-debug-session-output";
+const SESSION_OUTPUT_PREVIEW_CHARS = 120;
 
 export interface SessionOutputState {
   text: string;
@@ -28,6 +31,13 @@ function appendSessionOutput(base: string, addition: string): string {
   }
 
   return clampSessionOutput(`${base}${addition}`);
+}
+
+function previewOutput(value: string): string {
+  const sanitized = value.replace(/\r/g, "\\r").replace(/\n/g, "\\n");
+  return sanitized.length > SESSION_OUTPUT_PREVIEW_CHARS
+    ? `${sanitized.slice(0, SESSION_OUTPUT_PREVIEW_CHARS)}...`
+    : sanitized;
 }
 
 function notifySessions(sessionIds: Iterable<string>) {
@@ -91,6 +101,12 @@ export function applySessionSnapshotOutputs(snapshotSessions: SessionTab[]) {
           buildOutputState(undefined, snapshotText, session.updatedAt, snapshotText, true),
         )
       ) {
+        debugLog(SESSION_OUTPUT_DEBUG_FLAG, "session_output_store.snapshot_seed", {
+          sessionId: session.id,
+          updatedAt: session.updatedAt,
+          textLength: snapshotText.length,
+          preview: previewOutput(snapshotText),
+        });
         changedSessionIds.add(session.id);
       }
       continue;
@@ -101,6 +117,13 @@ export function applySessionSnapshotOutputs(snapshotSessions: SessionTab[]) {
     const currentIsNewer = parseSessionTimestamp(current.updatedAt) > parseSessionTimestamp(session.updatedAt);
 
     if (currentExtendsSnapshot && currentIsNewer) {
+      debugLog(SESSION_OUTPUT_DEBUG_FLAG, "session_output_store.snapshot_skip_stale", {
+        sessionId: session.id,
+        snapshotUpdatedAt: session.updatedAt,
+        currentUpdatedAt: current.updatedAt,
+        snapshotLength: snapshotText.length,
+        currentLength: current.text.length,
+      });
       continue;
     }
 
@@ -110,6 +133,12 @@ export function applySessionSnapshotOutputs(snapshotSessions: SessionTab[]) {
         buildOutputState(current, snapshotText, session.updatedAt, snapshotText, true),
       )
     ) {
+      debugLog(SESSION_OUTPUT_DEBUG_FLAG, "session_output_store.snapshot_reset", {
+        sessionId: session.id,
+        updatedAt: session.updatedAt,
+        textLength: snapshotText.length,
+        preview: previewOutput(snapshotText),
+      });
       changedSessionIds.add(session.id);
     }
   }
@@ -141,6 +170,15 @@ export function applySessionOutputEvents(events: SessionEvent[]) {
           buildOutputState(current, nextText, event.occurredAt, event.chunk, false),
         )
       ) {
+        debugLog(SESSION_OUTPUT_DEBUG_FLAG, "session_output_store.event_append", {
+          sessionId: event.sessionId,
+          kind: event.kind,
+          stream: event.stream,
+          occurredAt: event.occurredAt,
+          deltaLength: event.chunk.length,
+          totalLength: nextText.length,
+          preview: previewOutput(event.chunk),
+        });
         changedSessionIds.add(event.sessionId);
       }
       continue;
@@ -157,6 +195,15 @@ export function applySessionOutputEvents(events: SessionEvent[]) {
         buildOutputState(current, nextText, event.occurredAt, event.message, false),
       )
     ) {
+      debugLog(SESSION_OUTPUT_DEBUG_FLAG, "session_output_store.event_append", {
+        sessionId: event.sessionId,
+        kind: event.kind,
+        status: event.status,
+        occurredAt: event.occurredAt,
+        deltaLength: event.message.length,
+        totalLength: nextText.length,
+        preview: previewOutput(event.message),
+      });
       changedSessionIds.add(event.sessionId);
     }
   }

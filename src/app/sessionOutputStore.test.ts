@@ -29,6 +29,22 @@ function readOutput(sessionId = "session-1", fallback = ""): string {
 }
 
 describe("sessionOutputStore", () => {
+  it("appends the first remote chunk after the local connection message without duplicating it", () => {
+    resetSessionOutputStore();
+    applySessionSnapshotOutputs([session({ lastOutput: "已连接到 root@example:22\r\n\r\n", updatedAt: "1" })]);
+
+    const event: SessionEvent = {
+      kind: "output",
+      sessionId: "session-1",
+      stream: "stdout",
+      chunk: "Last login: today\r\n$ ",
+      occurredAt: "2",
+    };
+    applySessionOutputEvents([event]);
+
+    expect(readOutput()).toBe("已连接到 root@example:22\r\n\r\nLast login: today\r\n$ ");
+  });
+
   it("keeps newer event-driven output when a stale snapshot arrives", () => {
     resetSessionOutputStore();
     applySessionSnapshotOutputs([session({ lastOutput: "ready", updatedAt: "1" })]);
