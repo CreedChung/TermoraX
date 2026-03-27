@@ -1278,6 +1278,7 @@ select {
 
 .workspace-terminal-pane {
   flex: 1;
+  display: flex;
   min-height: 0;
   overflow: hidden;
 }
@@ -1494,16 +1495,19 @@ select {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  height: 100%;
 }
 
 .terminal-workspace {
+  flex: 1 1 0;
+  height: 100%;
   background: rgba(0, 0, 0, 0.1);
 }
 
 .terminal-shell {
   display: flex;
   flex-direction: column;
+  flex: 1 1 0;
+  height: 100%;
   min-height: 0;
 }
 
@@ -1596,7 +1600,7 @@ select {
 }
 
 .terminal-view {
-  flex: 1;
+  flex: 1 1 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -1604,9 +1608,23 @@ select {
 }
 
 .terminal-host {
-  flex: 1;
+  flex: 1 1 0;
   min-height: 0;
   border-radius: 0;
+}
+
+.terminal-host__surface,
+.terminal-host__surface .xterm,
+.terminal-host__surface .xterm-screen,
+.terminal-host__surface .xterm-viewport {
+  min-height: 0;
+}
+
+.tool-panel,
+.workspace-tools,
+.workspace-tools__content,
+.workspace-tools__content > * {
+  height: 100%;
 }
 
 .terminal-statusbar {
