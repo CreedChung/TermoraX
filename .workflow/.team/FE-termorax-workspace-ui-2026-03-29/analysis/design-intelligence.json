@@ -1,0 +1,215 @@
+{
+  "_source": "llm-general-knowledge",
+  "project": "TermoraX",
+  "industry": "DevTools/SSH-Client",
+  "detected_stack": {
+    "framework": "react-19",
+    "styling": "tailwindcss-v4",
+    "ui_library": "shadcn-ui",
+    "build_tool": "vite",
+    "desktop": "tauri-2"
+  },
+  "analysis_summary": {
+    "current_issues": [
+      "47+ hardcoded rgba() transparency values in CSS",
+      "Inconsistent border styling (mix of rgba values)",
+      "Missing semantic design token hierarchy",
+      "No systematic shadow/elevation system",
+      "Panel spacing lacks consistency"
+    ],
+    "design_goals": [
+      "Unified design token system",
+      "Modernized dark theme with better contrast",
+      "WCAG AA accessibility compliance",
+      "Consistent 8px grid spacing",
+      "Professional developer tool aesthetic"
+    ]
+  },
+  "design_system": {
+    "color_strategy": {
+      "approach": "semantic-token-based",
+      "base_palette": {
+        "background": {
+          "primary": "#101316",
+          "secondary": "#12171d",
+          "tertiary": "#1b232b"
+        },
+        "surface": {
+          "default": "rgba(18, 23, 29, 0.95)",
+          "elevated": "rgba(33, 42, 52, 0.98)",
+          "overlay": "rgba(0, 0, 0, 0.80)"
+        },
+        "accent": {
+          "primary": "#f2a05c",
+          "secondary": "#6fcf97",
+          "danger": "#ff8d7d",
+          "info": "#7dd3fc"
+        },
+        "text": {
+          "primary": "#f5f1e8",
+          "secondary": "#b5b0a5",
+          "muted": "#8a8479",
+          "inverse": "#101316"
+        }
+      },
+      "token_structure": {
+        "semantic_naming": "--<category>-<variant>-<state>",
+        "categories": ["bg", "surface", "text", "border", "accent", "state"],
+        "variants": ["default", "primary", "secondary", "muted", "elevated"],
+        "states": ["default", "hover", "active", "disabled", "focus"]
+      }
+    },
+    "typography": {
+      "font_family": "'Segoe UI Variable', 'Noto Sans', system-ui, sans-serif",
+      "mono_family": "'JetBrains Mono', 'Cascadia Code', Consolas, monospace",
+      "scale": {
+        "xs": { "size": "11px", "lineHeight": "16px", "letterSpacing": "0.01em" },
+        "sm": { "size": "12px", "lineHeight": "18px", "letterSpacing": "0" },
+        "base": { "size": "13px", "lineHeight": "20px", "letterSpacing": "0" },
+        "lg": { "size": "14px", "lineHeight": "22px", "letterSpacing": "-0.01em" },
+        "xl": { "size": "16px", "lineHeight": "24px", "letterSpacing": "-0.01em" }
+      }
+    },
+    "spacing": {
+      "grid": "8px",
+      "scale": {
+        "0": "0px",
+        "1": "4px",
+        "2": "8px",
+        "3": "12px",
+        "4": "16px",
+        "5": "20px",
+        "6": "24px",
+        "8": "32px",
+        "10": "40px",
+        "12": "48px"
+      },
+      "component_gaps": {
+        "xs": "4px",
+        "sm": "6px",
+        "md": "8px",
+        "lg": "12px",
+        "xl": "16px"
+      }
+    },
+    "borders": {
+      "widths": {
+        "thin": "1px",
+        "medium": "2px",
+        "thick": "3px"
+      },
+      "styles": {
+        "default": "solid",
+        "subtle": "1px solid var(--border-default)",
+        "focus": "2px solid var(--accent-primary)"
+      },
+      "radius": {
+        "sm": "6px",
+        "md": "8px",
+        "lg": "12px",
+        "xl": "16px",
+        "full": "9999px"
+      }
+    },
+    "shadows": {
+      "elevation": {
+        "1": "0 1px 2px rgba(0, 0, 0, 0.20)",
+        "2": "0 4px 8px rgba(0, 0, 0, 0.24)",
+        "3": "0 8px 16px rgba(0, 0, 0, 0.28)",
+        "4": "0 12px 24px rgba(0, 0, 0, 0.32)",
+        "5": "0 20px 40px rgba(0, 0, 0, 0.36)"
+      },
+      "glow": {
+        "accent": "0 0 20px rgba(242, 160, 92, 0.15)",
+        "focus": "0 0 0 3px rgba(242, 160, 92, 0.20)"
+      }
+    }
+  },
+  "ux_guidelines": {
+    "accessibility": {
+      "contrast_ratio": "WCAG AA: 4.5:1 for normal text, 3:1 for large text",
+      "focus_indicators": "Visible focus rings with accent color",
+      "keyboard_navigation": "Full keyboard support with visible shortcuts",
+      "screen_reader": "Proper ARIA labels and semantic HTML"
+    },
+    "interaction": {
+      "hover_states": "Subtle background color changes, never rely on color alone",
+      "active_states": "Slightly darker backgrounds or accent overlays",
+      "disabled_states": "Reduced opacity (0.5) with cursor: not-allowed",
+      "loading_states": "Skeleton screens or spinners with reduced opacity"
+    },
+    "layout": {
+      "terminal_aesthetic": "Dark backgrounds with high contrast text",
+      "panel_organization": "Clear visual hierarchy with consistent spacing",
+      "resizable_panels": "Visual splitters with hover feedback",
+      "compact_density": "Developer-focused, information-dense UI"
+    }
+  },
+  "stack_guidelines": {
+    "tailwind_v4": {
+      "theme_config": "Use @theme directive for custom properties",
+      "custom_properties": "Define in :root and @theme inline",
+      "dark_mode": "Class-based with .dark selector"
+    },
+    "shadcn_ui": {
+      "component_variants": "Use cva for component variants",
+      "theme_integration": "Extend shadcn theme with custom tokens",
+      "css_variables": "Align with shadcn's --ui-* variable naming"
+    },
+    "react_19": {
+      "component_structure": "Functional components with hooks",
+      "state_management": "Local state for UI, context for shared state",
+      "performance": "Memo for expensive computations"
+    }
+  },
+  "existing_patterns": {
+    "current_color_tokens": [
+      "--surface: rgba(18, 23, 29, 0.92)",
+      "--surface-alt: rgba(27, 35, 43, 0.92)",
+      "--border: rgba(243, 229, 207, 0.08)",
+      "--accent: #f2a05c"
+    ],
+    "border_usage": "rgba(243, 229, 207, 0.08) with subtle 8% opacity",
+    "opacity_patterns": "Multiple 0.92, 0.70-0.95 range for surfaces"
+  },
+  "recommendations": {
+    "style_patterns": [
+      "Replace all hardcoded rgba() with semantic CSS variables",
+      "Use --surface-* tokens for background layers",
+      "Standardize border to --border-default (12% opacity)",
+      "Apply consistent 8px spacing grid",
+      "Use elevation shadows for popovers and dialogs"
+    ],
+    "color_changes": [
+      "Increase surface opacity to 0.95-0.98 for better contrast",
+      "Border opacity: 0.08 -> 0.12 for better visibility",
+      "Add --surface-hover variants for interactive elements",
+      "Maintain accent #f2a05c for brand consistency"
+    ],
+    "anti_patterns_to_fix": [
+      "Hardcoded rgba(0,0,0,0.2) in component backgrounds",
+      "Mixed border styles (some with transparency, some solid)",
+      "Inconsistent spacing (6px, 8px, 10px mixed)",
+      "Direct opacity manipulation instead of semantic tokens"
+    ],
+    "must_have_tokens": [
+      "--bg-primary, --bg-secondary, --bg-tertiary",
+      "--surface-default, --surface-hover, --surface-active, --surface-elevated",
+      "--text-primary, --text-secondary, --text-muted",
+      "--border-default, --border-hover, --border-focus",
+      "--accent-primary, --accent-secondary",
+      "--shadow-sm, --shadow-md, --shadow-lg"
+    ]
+  },
+  "components_inventory": [
+    "WorkspaceShell - Main 3-panel layout container",
+    "ConnectionSidebar - Left sidebar for SSH connections",
+    "TerminalWorkspace - Terminal tabs and panes",
+    "FilePanel - SFTP file manager with split view",
+    "TransferPanel - File transfer progress",
+    "SnippetPanel - Code snippets management",
+    "HistoryPanel - Command history list",
+    "LogPanel - Application logs",
+    "SettingsDialog - Settings modal"
+  ]
+}

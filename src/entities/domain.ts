@@ -5,7 +5,7 @@ export type ExtensionKind =
   | "terminalAction"
   | "commandPaletteItem"
   | "connectionProtocol";
-export type ThemeId = "midnight" | "sand" | "jade" | "tide" | "graphite";
+export type ThemeId = "midnight" | "sand" | "jade" | "tide" | "graphite" | "shadcn";
 export type BottomPanelId = "files" | "snippets" | "history" | "logs";
 export type TerminalSplitDirection = "none" | "horizontal" | "vertical";
 export type TerminalPaneId = "primary" | "secondary";

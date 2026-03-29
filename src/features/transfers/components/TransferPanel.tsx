@@ -1,4 +1,13 @@
 import { memo } from "react";
+import { Trash2, RotateCcw } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { TransferTask } from "../../../entities/domain";
 import { t } from "../../../shared/i18n";
 import { formatTimestamp } from "../../../shared/lib/time";
@@ -27,6 +36,22 @@ function getTransferProgress(task: TransferTask): number {
   return Math.max(0, Math.min(100, Math.round((task.bytesTransferred / task.bytesTotal) * 100)));
 }
 
+function formatTransferBytes(task: TransferTask): string {
+  return `${task.bytesTransferred} / ${task.bytesTotal || task.bytesTransferred} B`;
+}
+
+function getStatusVariant(status: TransferTask["status"]): "outline" | "secondary" | "destructive" {
+  if (status === "succeeded") {
+    return "secondary";
+  }
+
+  if (status === "failed" || status === "canceled") {
+    return "destructive";
+  }
+
+  return "outline";
+}
+
 export const TransferPanel = memo(function TransferPanel({
   tasks,
   loading = false,
@@ -44,85 +69,113 @@ export const TransferPanel = memo(function TransferPanel({
   );
 
   return (
-    <section className="panel transfer-panel">
-      <header className="panel__header">
+    <Card className="panel transfer-panel border border-app-border bg-app-surface/90 text-app-text shadow-none">
+      <CardHeader className="panel__header flex flex-row items-start justify-between gap-4">
         <div>
           <p className="panel__eyebrow">{t("transfers.title")}</p>
-          <h2 className="panel__title">{summary}</h2>
+          <CardTitle className="panel__title">{summary}</CardTitle>
         </div>
         {onClearCompleted ? (
           <div>
-            <button
-              type="button"
-              className="ghost-button transfer-row__action"
-              onClick={onClearCompleted}
-              disabled={loading || !hasCompleted}
-              aria-disabled={loading || !hasCompleted}
-            >
-              {t("transfers.clearCompleted")}
-            </button>
+            <Tooltip>
+              <TooltipTrigger>
+                <Button
+                  type="button"
+                  className="transfer-row__action"
+                  onClick={onClearCompleted}
+                  disabled={loading || !hasCompleted}
+                  aria-disabled={loading || !hasCompleted}
+                  variant="outline"
+                  size="icon-sm"
+                >
+                  <Trash2 className="h-4 w-4" />
+                  <span className="sr-only">{t("transfers.clearCompleted")}</span>
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="top">{t("transfers.clearCompleted")}</TooltipContent>
+            </Tooltip>
           </div>
         ) : null}
-      </header>
-      <div className="panel__body">
+      </CardHeader>
+      <CardContent className="panel__body">
         {loading ? (
-          <div className="transfer-panel__state">
+          <Card className="transfer-panel__state border border-app-border bg-app-surface-alt/60 text-app-text shadow-none">
+            <CardContent className="py-6">
             <p>{t("transfers.loading")}</p>
-          </div>
+            </CardContent>
+          </Card>
         ) : tasks.length === 0 ? (
-          <div className="empty-panel">
+          <Card className="empty-panel border border-app-border bg-app-surface-alt/60 text-app-text shadow-none">
+            <CardContent className="py-6">
             <p>{t("transfers.empty")}</p>
-          </div>
+            </CardContent>
+          </Card>
         ) : (
           <div className="transfer-list">
             {tasks.map((task) => (
-              <article className="transfer-row" key={task.id}>
+              <Card className="transfer-row border border-app-border bg-app-surface-alt/60 text-app-text shadow-none" key={task.id}>
+                <CardContent className="flex flex-col gap-3 p-4">
                 <div className="transfer-row__summary">
                   <strong>{task.direction === "upload" ? task.localPath : task.remotePath}</strong>
-                  <span>
+                  <span className="sr-only">
                     {task.direction === "upload" ? t("transfers.upload") : t("transfers.download")}
                     {" · "}
                     {statusLabels[task.status]}
                   </span>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="outline">{task.direction === "upload" ? t("transfers.upload") : t("transfers.download")}</Badge>
+                    <Badge variant={getStatusVariant(task.status)}>{statusLabels[task.status]}</Badge>
+                  </div>
                   <p>{task.direction === "upload" ? task.remotePath : task.localPath}</p>
                 </div>
                 <div className="transfer-row__meta">
                   <div className="transfer-progress">
                     <div className="transfer-progress__fill" style={{ width: `${getTransferProgress(task)}%` }} />
                   </div>
-                  <span>{`${task.bytesTransferred} / ${task.bytesTotal || task.bytesTransferred} B`}</span>
+                  <span>{formatTransferBytes(task)}</span>
                   <span className="transfer-row__time">
                     {formatTimestamp(task.finishedAt ?? task.startedAt)}
                   </span>
                   {task.message ? <span>{task.message}</span> : null}
                   {(task.status === "running" || task.status === "canceling") && onCancel ? (
-                    <button
+                    <Button
                       type="button"
-                      className="ghost-button transfer-row__action"
+                      className="transfer-row__action"
                       onClick={() => onCancel(task)}
                       disabled={loading || task.status === "canceling"}
                       aria-disabled={loading || task.status === "canceling"}
+                      variant="outline"
+                      size="sm"
                     >
                       {task.status === "canceling" ? t("transfers.canceling") : t("transfers.cancel")}
-                    </button>
+                    </Button>
                   ) : null}
                   {task.status === "failed" && onRetry ? (
-                    <button
-                      type="button"
-                      className="ghost-button transfer-row__action"
-                      onClick={() => onRetry(task)}
-                      disabled={loading}
-                      aria-disabled={loading}
-                    >
-                      {t("transfers.retry")}
-                    </button>
+                    <Tooltip>
+                      <TooltipTrigger>
+                        <Button
+                          type="button"
+                          className="transfer-row__action"
+                          onClick={() => onRetry(task)}
+                          disabled={loading}
+                          aria-disabled={loading}
+                          variant="destructive"
+                          size="icon-sm"
+                        >
+                          <RotateCcw className="h-4 w-4" />
+                          <span className="sr-only">{t("transfers.retry")}</span>
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent side="top">{t("transfers.retry")}</TooltipContent>
+                    </Tooltip>
                   ) : null}
                 </div>
-              </article>
+                </CardContent>
+              </Card>
             ))}
           </div>
         )}
-      </div>
-    </section>
+      </CardContent>
+    </Card>
   );
 });

@@ -1,7 +1,19 @@
 import { useMemo, useState } from "react";
+import { Star, Pencil, Play, Trash2 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import type { CommandSnippet } from "../../../entities/domain";
 import type { WorkspaceController } from "../../../app/useWorkspaceApp";
 import { t } from "../../../shared/i18n";
+import { SnippetFilters } from "@/components/ui/snippet-filters";
 
 interface SnippetPanelProps {
   controller: WorkspaceController;
@@ -132,38 +144,24 @@ export function SnippetPanel({ controller }: SnippetPanelProps) {
   }
 
   return (
-    <section className="tool-panel snippet-panel">
-      <header className="tool-panel__header snippet-panel__header">
+    <Card className="tool-panel snippet-panel border border-app-border bg-app-surface/90 text-app-text shadow-none">
+      <CardHeader className="tool-panel__header snippet-panel__header">
         <div>
-          <strong>{t("snippets.title")}</strong>
+          <CardTitle className="text-base">{t("snippets.title")}</CardTitle>
           <span>{t("snippets.subtitle", { count: visibleSnippets.length })}</span>
         </div>
-        <div className="snippet-panel__filters">
-          <input
-            className="tool-panel__search"
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder={t("snippets.searchPlaceholder")}
-            value={query}
-          />
-          <select onChange={(event) => setSelectedGroup(event.target.value)} value={selectedGroup}>
-            <option value="all">{t("snippets.group.all")}</option>
-            {groupOptions.map((group) => (
-              <option key={group} value={group}>
-                {group}
-              </option>
-            ))}
-          </select>
-          <button
-            className={`ghost-button toolbar-button ${favoritesOnly ? "is-active" : ""}`}
-            onClick={() => setFavoritesOnly((current) => !current)}
-            type="button"
-          >
-            {t("snippets.filter.favorite")}
-          </button>
-        </div>
-      </header>
+        <SnippetFilters
+          query={query}
+          onQueryChange={setQuery}
+          selectedGroup={selectedGroup}
+          onGroupChange={setSelectedGroup}
+          favoritesOnly={favoritesOnly}
+          onFavoritesOnlyChange={setFavoritesOnly}
+          groupOptions={groupOptions}
+        />
+      </CardHeader>
 
-      <div className="snippet-panel__layout">
+      <CardContent className="snippet-panel__layout">
         <div className="snippet-list snippet-list--dense">
           {visibleSnippets.length === 0 ? (
             <div className="empty-panel">
@@ -176,7 +174,10 @@ export function SnippetPanel({ controller }: SnippetPanelProps) {
               return (
                 <div className="snippet-row" key={snippet.id}>
                   <div className="snippet-row__summary">
-                    <strong>{snippet.name}</strong>
+                    <strong className="flex items-center gap-2">
+                      <span>{snippet.name}</span>
+                      {snippet.favorite ? <Badge variant="secondary">{t("snippets.favorite")}</Badge> : null}
+                    </strong>
                     <span>
                       {snippet.group}
                       {parameterCount > 0 ? ` · ${t("snippets.parameterCount", { count: parameterCount })}` : ""}
@@ -185,30 +186,66 @@ export function SnippetPanel({ controller }: SnippetPanelProps) {
                     {snippet.description ? <span>{snippet.description}</span> : null}
                   </div>
                   <div className="button-row snippet-row__actions">
-                    <button
-                      className={`ghost-button toolbar-button ${snippet.favorite ? "is-active" : ""}`}
-                      onClick={() => void toggleFavorite(snippet)}
-                      type="button"
-                    >
-                      {snippet.favorite ? t("snippets.unfavorite") : t("snippets.favorite")}
-                    </button>
-                    <button className="ghost-button toolbar-button" onClick={() => editSnippet(snippet)} type="button">
-                      {t("snippets.edit")}
-                    </button>
-                    <button
-                      className="ghost-button toolbar-button"
-                      onClick={() => void runSnippet(snippet)}
-                      type="button"
-                    >
-                      {t("snippets.run")}
-                    </button>
-                    <button
-                      className="danger-button toolbar-button"
-                      onClick={() => void controller.deleteSnippet(snippet.id)}
-                      type="button"
-                    >
-                      {t("snippets.delete")}
-                    </button>
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <Button
+                            className={snippet.favorite ? "is-active" : ""}
+                            onClick={() => void toggleFavorite(snippet)}
+                            type="button"
+                            variant={snippet.favorite ? "secondary" : "outline"}
+                            size="icon-sm"
+                          >
+                            <Star className="h-4 w-4" fill={snippet.favorite ? "currentColor" : "none"} />
+                            <span className="sr-only">{snippet.favorite ? t("snippets.unfavorite") : t("snippets.favorite")}</span>
+                          </Button>
+                        }
+                      />
+                      <TooltipContent side="top">{snippet.favorite ? t("snippets.unfavorite") : t("snippets.favorite")}</TooltipContent>
+                    </Tooltip>
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <Button onClick={() => editSnippet(snippet)} type="button" variant="outline" size="icon-sm">
+                            <Pencil className="h-4 w-4" />
+                            <span className="sr-only">{t("snippets.edit")}</span>
+                          </Button>
+                        }
+                      />
+                      <TooltipContent side="top">{t("snippets.edit")}</TooltipContent>
+                    </Tooltip>
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <Button
+                            onClick={() => void runSnippet(snippet)}
+                            type="button"
+                            variant="default"
+                            size="icon-sm"
+                          >
+                            <Play className="h-4 w-4" />
+                            <span className="sr-only">{t("snippets.run")}</span>
+                          </Button>
+                        }
+                      />
+                      <TooltipContent side="top">{t("snippets.run")}</TooltipContent>
+                    </Tooltip>
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <Button
+                            onClick={() => void controller.deleteSnippet(snippet.id)}
+                            type="button"
+                            variant="destructive"
+                            size="icon-sm"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                            <span className="sr-only">{t("snippets.delete")}</span>
+                          </Button>
+                        }
+                      />
+                      <TooltipContent side="top">{t("snippets.delete")}</TooltipContent>
+                    </Tooltip>
                   </div>
                 </div>
               );
@@ -217,7 +254,7 @@ export function SnippetPanel({ controller }: SnippetPanelProps) {
         </div>
 
         <form
-          className="stack-form snippet-editor"
+          className="stack-form snippet-editor rounded-xl border border-app-border bg-app-surface-alt/60 p-4"
           onSubmit={(event) => {
             event.preventDefault();
             void controller.saveSnippet({
@@ -237,7 +274,7 @@ export function SnippetPanel({ controller }: SnippetPanelProps) {
         >
           <label>
             <span>{t("snippets.field.name")}</span>
-            <input
+            <Input
               onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))}
               placeholder="磁盘占用检查"
               value={draft.name}
@@ -245,7 +282,7 @@ export function SnippetPanel({ controller }: SnippetPanelProps) {
           </label>
           <label>
             <span>{t("snippets.field.command")}</span>
-            <textarea
+            <Textarea
               onChange={(event) => setDraft((current) => ({ ...current, command: event.target.value }))}
               placeholder="df -h"
               rows={4}
@@ -255,7 +292,7 @@ export function SnippetPanel({ controller }: SnippetPanelProps) {
           <p className="snippet-editor__hint">{t("snippets.parameterHint")}</p>
           <label>
             <span>{t("snippets.field.description")}</span>
-            <input
+            <Input
               onChange={(event) => setDraft((current) => ({ ...current, description: event.target.value }))}
               placeholder="快速查看文件系统占用"
               value={draft.description}
@@ -264,7 +301,7 @@ export function SnippetPanel({ controller }: SnippetPanelProps) {
           <div className="form-grid">
             <label>
               <span>{t("snippets.field.group")}</span>
-              <input
+              <Input
                 onChange={(event) => setDraft((current) => ({ ...current, group: event.target.value }))}
                 placeholder="诊断"
                 value={draft.group}
@@ -272,18 +309,18 @@ export function SnippetPanel({ controller }: SnippetPanelProps) {
             </label>
             <label>
               <span>{t("snippets.field.tags")}</span>
-              <input
+              <Input
                 onChange={(event) => setDraft((current) => ({ ...current, tags: event.target.value }))}
                 placeholder="磁盘, 运行时"
                 value={draft.tags}
               />
             </label>
           </div>
-          <button className="primary-button" type="submit">
+          <Button type="submit">
             {t("snippets.save")}
-          </button>
+          </Button>
         </form>
-      </div>
-    </section>
+      </CardContent>
+    </Card>
   );
 }

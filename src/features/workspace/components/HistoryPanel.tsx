@@ -1,4 +1,13 @@
 import { useMemo, useState } from "react";
+import { Play } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { Input } from "@/components/ui/input";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import type { WorkspaceController } from "../../../app/useWorkspaceApp";
 import { formatTimestamp } from "../../../shared/lib/time";
 import { t } from "../../../shared/i18n";
@@ -23,24 +32,24 @@ export function HistoryPanel({ controller }: HistoryPanelProps) {
   }, [controller.state.commandHistory, searchTerm]);
 
   return (
-    <section className="tool-panel">
-      <header className="tool-panel__header">
+    <Card className="tool-panel border border-app-border bg-app-surface/90 text-app-text shadow-none">
+      <CardHeader className="tool-panel__header flex flex-row items-center justify-between gap-4">
         <strong>{t("history.title")}</strong>
-        <input
+        <Input
           aria-label={t("history.searchPlaceholder")}
-          className="tool-panel__search"
+          className="tool-panel__search border-app-border bg-black/20 text-app-text"
           onChange={(event) => setSearchTerm(event.target.value)}
           placeholder={t("history.searchPlaceholder")}
           value={searchTerm}
         />
-      </header>
+      </CardHeader>
 
       {filteredEntries.length === 0 ? (
-        <div className="empty-panel">
+        <CardContent className="empty-panel">
           <p>{t("history.empty")}</p>
-        </div>
+        </CardContent>
       ) : (
-        <div className="history-list">
+        <CardContent className="history-list">
           {filteredEntries.map((entry) => (
             <article className="history-row" key={entry.id}>
               <div className="history-row__summary">
@@ -51,20 +60,28 @@ export function HistoryPanel({ controller }: HistoryPanelProps) {
                   {formatTimestamp(entry.executedAt)}
                 </span>
               </div>
-              <button
-                className="ghost-button history-row__action"
-                disabled={!activeSessionId}
-                onClick={() =>
-                  activeSessionId ? void controller.sendSessionInput(activeSessionId, `${entry.command}\r`) : undefined
-                }
-                type="button"
-              >
-                {t("history.run")}
-              </button>
+              <Tooltip>
+                <TooltipTrigger>
+                  <Button
+                    className="history-row__action"
+                    disabled={!activeSessionId}
+                    onClick={() =>
+                      activeSessionId ? void controller.sendSessionInput(activeSessionId, `${entry.command}\r`) : undefined
+                    }
+                    type="button"
+                    variant="outline"
+                    size="icon-sm"
+                  >
+                    <Play className="h-4 w-4" />
+                    <span className="sr-only">{t("history.run")}</span>
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="top">{t("history.run")}</TooltipContent>
+              </Tooltip>
             </article>
           ))}
-        </div>
+        </CardContent>
       )}
-    </section>
+    </Card>
   );
 }

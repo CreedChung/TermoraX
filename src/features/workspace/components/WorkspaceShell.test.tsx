@@ -125,6 +125,55 @@ describe("WorkspaceShell", () => {
     expect(screen.queryByText("远程文件")).not.toBeInTheDocument();
   });
 
+  it("opens host fingerprint verification dialog when pendingHostVerification exists", () => {
+    const controller = createController({
+      state: buildState({
+        pendingHostVerification: {
+          connectionId: "conn-1",
+          host: "38.76.219.232",
+          port: 22,
+          algorithm: "ssh-ed25519",
+          fingerprint: "SHA256:abc123",
+          trustStatus: "untrusted",
+          trustedFingerprint: null,
+          inspectedAt: "2024-01-01T00:00:00Z",
+        },
+      }),
+    });
+
+    render(<WorkspaceShell controller={controller} />);
+
+    expect(screen.getByText("请确认主机指纹")).toBeInTheDocument();
+    // Check for fingerprint text which is clearly displayed
+    expect(screen.getByText("SHA256:abc123")).toBeInTheDocument();
+  });
+
+  it("calls dismissPendingHostVerification when host verification dialog is closed", async () => {
+    const user = userEvent.setup();
+    const dismissPendingHostVerification = vi.fn();
+    const controller = createController({
+      dismissPendingHostVerification,
+      state: buildState({
+        pendingHostVerification: {
+          connectionId: "conn-1",
+          host: "38.76.219.232",
+          port: 22,
+          algorithm: "ssh-ed25519",
+          fingerprint: "SHA256:abc123",
+          trustStatus: "untrusted",
+          trustedFingerprint: null,
+          inspectedAt: "2024-01-01T00:00:00Z",
+        },
+      }),
+    });
+
+    render(<WorkspaceShell controller={controller} />);
+    const cancelButton = screen.getByRole("button", { name: "暂不信任" });
+    await user.click(cancelButton);
+
+    expect(dismissPendingHostVerification).toHaveBeenCalled();
+  });
+
   it("dispatches bottom tab selection", async () => {
     const user = userEvent.setup();
     const selectBottomPanel = vi.fn();

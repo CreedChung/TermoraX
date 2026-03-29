@@ -8,6 +8,11 @@ import {
   useRef,
   useState,
 } from "react";
+import { RefreshCw, Upload, Download, FolderPlus, CornerUpLeft, Folder, FileText } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import type { RemoteFileEntry } from "../../../entities/domain";
 import { Panel } from "../../../shared/components/Panel";
 import { t } from "../../../shared/i18n";
@@ -182,18 +187,20 @@ export function FilePanel(props: FilePanelProps) {
     [directoryWidth, layoutScale],
   );
 
-  const iconButton = (label: string, onClick?: () => void, disabled?: boolean, icon?: string) => (
-    <button
+  const iconButton = (label: string, onClick?: () => void, disabled?: boolean, icon?: React.ReactNode) => (
+    <Button
       type="button"
-      className="ghost-button file-panel__icon-button"
+      className="file-panel__icon-button"
       onClick={onClick}
       disabled={disabled}
       aria-disabled={disabled}
       aria-label={label}
+      variant="outline"
+      size="icon-sm"
     >
-      <span aria-hidden="true">{icon ?? "●"}</span>
+      <span aria-hidden="true">{icon ?? <span className="h-4 w-4" />}</span>
       <span className="sr-only">{label}</span>
-    </button>
+    </Button>
   );
 
   const forwardWheelToActiveList = useCallback((event: ReactWheelEvent<HTMLElement>) => {
@@ -222,49 +229,57 @@ export function FilePanel(props: FilePanelProps) {
         <label className="sr-only" htmlFor="file-panel-path">
           {pathLabel}
         </label>
-        <input
+        <Input
           id="file-panel-path"
           type="text"
           value={pathDraft}
           onChange={(event) => setPathDraft(event.target.value)}
           disabled={!currentPath || loading}
           placeholder={currentPath ? t("files.pathPlaceholder") : t("files.noSession")}
-          className="file-panel__path-input"
+          className="file-panel__path-input border-app-border bg-black/20 text-app-text"
         />
         <div className="file-panel__icon-buttons">
-          {iconButton(t("files.refresh"), onRefresh, loading || !currentPath || !onRefresh, "⟳")}
-          {iconButton(t("files.upload"), onUpload, loading || !onUpload, "⇧")}
+          {iconButton(t("files.refresh"), onRefresh, loading || !currentPath || !onRefresh, <RefreshCw className="h-4 w-4" />)}
+          {iconButton(t("files.upload"), onUpload, loading || !onUpload, <Upload className="h-4 w-4" />)}
           {iconButton(
             t("files.download"),
             selectedEntry && selectedEntry.kind === "file" && onDownload
               ? () => onDownload(selectedEntry.path)
               : undefined,
             loading || !onDownload || !selectedEntry || selectedEntry.kind !== "file",
-            "⇩",
+            <Download className="h-4 w-4" />,
           )}
           {iconButton(
             t("files.newFolder"),
             onCreateDirectory,
             loading || !onCreateDirectory,
-            "📁✚",
+            <FolderPlus className="h-4 w-4" />,
           )}
-          <button
+          <Button
             type="button"
-            className="ghost-button file-panel__icon-button"
+            className="file-panel__icon-button"
             onClick={onGoParent}
             disabled={!currentPath || loading || !onGoParent}
+            variant="outline"
+            size="icon-sm"
+            aria-label={t("files.goParent")}
           >
-            <span aria-hidden="true">↖</span>
+            <CornerUpLeft className="h-4 w-4" aria-hidden="true" />
             <span className="sr-only">{t("files.goParent")}</span>
-          </button>
+          </Button>
         </div>
       </form>
-      <p className="file-panel__meta-count">{summaryLabel}</p>
+      <div className="flex items-center justify-between gap-3">
+        <p className="file-panel__meta-count">{summaryLabel}</p>
+        {currentPath ? <Badge variant="outline">{currentPath}</Badge> : null}
+      </div>
 
       {loading ? (
-        <div className="file-panel__state">
+        <Card className="file-panel__state w-full border border-app-border bg-app-surface-alt/60 text-app-text shadow-none">
+          <CardContent className="py-6">
           <p>{statusMessage}</p>
-        </div>
+          </CardContent>
+        </Card>
       ) : (
         <div
           className="file-panel__split"
@@ -272,13 +287,15 @@ export function FilePanel(props: FilePanelProps) {
           style={{ gridTemplateColumns: `${directoryWidth}px 8px minmax(0, 1fr)` }}
         >
           <section className="file-panel__directories">
-            <header className="file-panel__directories-header">
-              <strong>{t("files.directories")}</strong>
-              <span>{t("files.entryCount", { count: rootDirectories.length })}</span>
-            </header>
+            <Card className="h-full border border-app-border bg-app-surface-alt/60 text-app-text shadow-none">
+              <CardHeader className="file-panel__directories-header">
+                <CardTitle className="text-sm">{t("files.directories")}</CardTitle>
+                <span>{t("files.entryCount", { count: rootDirectories.length })}</span>
+              </CardHeader>
+              <CardContent className="min-h-0">
             <div className="file-panel__directories-list" ref={directoryListRef}>
               {rootDirectories.map((entry) => (
-                <button
+                <Button
                   key={entry.path}
                   type="button"
                   className={`file-panel__directory-row ${
@@ -287,15 +304,19 @@ export function FilePanel(props: FilePanelProps) {
                   onClick={() => setSelectedDirectory(entry.path)}
                   onDoubleClick={() => openDirectory(entry.path)}
                   disabled={loading}
+                  variant={selectedDirectory === entry.path ? "secondary" : "ghost"}
+                  size="sm"
                 >
-                  <span className="file-panel__directory-icon">📁</span>
+                  <Folder className="file-panel__directory-icon h-4 w-4" />
                   <span>{entry.name}</span>
-                </button>
+                </Button>
               ))}
               {rootDirectories.length === 0 ? (
                 <p className="file-panel__directories-empty">{t("files.directoryEmpty")}</p>
               ) : null}
             </div>
+              </CardContent>
+            </Card>
           </section>
 
           <div
@@ -307,9 +328,11 @@ export function FilePanel(props: FilePanelProps) {
 
           <section className="file-panel__files">
             {!entries.length ? (
-              <div className="empty-panel">
+              <Card className="empty-panel w-full border border-app-border bg-app-surface-alt/60 text-app-text shadow-none">
+                <CardContent className="py-6">
                 <p>{statusMessage}</p>
-              </div>
+                </CardContent>
+              </Card>
             ) : (
               <div className="file-table">
                 <header className="file-table__header" onWheel={forwardWheelToActiveList}>
@@ -339,10 +362,13 @@ export function FilePanel(props: FilePanelProps) {
                     >
                       <div className="file-table__cell file-table__cell--name">
                         <span className="file-table__name-icon" aria-hidden="true">
-                          {entry.kind === "directory" ? "📁" : "📄"}
+                          {entry.kind === "directory" ? <Folder className="h-4 w-4" /> : <FileText className="h-4 w-4" />}
                         </span>
                         <div className="file-table__name-copy">
-                          <strong>{entry.name}</strong>
+                          <strong className="flex items-center gap-2">
+                            <span>{entry.name}</span>
+                            <Badge variant={entry.kind === "directory" ? "secondary" : "outline"}>{typeLabel}</Badge>
+                          </strong>
                           <span className="file-table__name-meta">
                             {entry.createdAt ? `${t("files.createdAt")} ${formatTimestamp(entry.createdAt)}` : null}
                             {entry.createdAt ? " · " : ""}
@@ -357,46 +383,52 @@ export function FilePanel(props: FilePanelProps) {
                       <span className="file-table__cell file-table__cell--meta">{formatTimestamp(entry.modifiedAt)}</span>
                       <div className="file-table__cell file-table__cell--actions">
                         {entry.kind === "file" && onDownload ? (
-                          <button
+                          <Button
                             type="button"
-                            className="ghost-button file-item__action-button"
+                            className="file-item__action-button"
                             onClick={(event) => {
                               event.stopPropagation();
                               onDownload(entry.path);
                             }}
                             disabled={loading}
                             aria-disabled={loading}
+                            variant="outline"
+                            size="sm"
                           >
                             {t("files.download")}
-                          </button>
+                          </Button>
                         ) : null}
                         {onRename ? (
-                          <button
+                          <Button
                             type="button"
-                            className="ghost-button file-item__action-button"
+                            className="file-item__action-button"
                             onClick={(event) => {
                               event.stopPropagation();
                               onRename(entry);
                             }}
                             disabled={loading}
                             aria-disabled={loading}
+                            variant="ghost"
+                            size="sm"
                           >
                             {t("files.rename")}
-                          </button>
+                          </Button>
                         ) : null}
                         {onDelete ? (
-                          <button
+                          <Button
                             type="button"
-                            className="ghost-button file-item__action-button file-item__action-button--danger"
+                            className="file-item__action-button file-item__action-button--danger"
                             onClick={(event) => {
                               event.stopPropagation();
                               onDelete(entry);
                             }}
                             disabled={loading}
                             aria-disabled={loading}
+                            variant="destructive"
+                            size="sm"
                           >
                             {t("files.delete")}
-                          </button>
+                          </Button>
                         ) : null}
                       </div>
                     </article>

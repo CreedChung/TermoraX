@@ -1,4 +1,6 @@
 import { useMemo } from "react";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import type { WorkspaceController } from "../../../app/useWorkspaceApp";
 import { t } from "../../../shared/i18n";
 import { formatTimestamp } from "../../../shared/lib/time";
@@ -45,25 +47,30 @@ export function LogPanel({ controller }: LogPanelProps) {
   }, [controller]);
 
   return (
-    <section className="tool-panel">
-      <header className="tool-panel__header">
+    <Card className="tool-panel border border-app-border bg-app-surface/90 text-app-text shadow-none">
+      <CardHeader className="tool-panel__header flex flex-row items-center justify-between gap-4">
         <strong>{t("logs.title")}</strong>
-      </header>
+      </CardHeader>
 
       {entries.length === 0 ? (
-        <div className="empty-panel">
+        <CardContent className="empty-panel">
           <p>{t("logs.empty")}</p>
-        </div>
+        </CardContent>
       ) : (
-        <div className="log-list">
+        <CardContent className="log-list">
           {entries.map((entry) => (
             <article className={`log-row log-row--${entry.kind}`} key={entry.id}>
-              <strong>{entry.title}</strong>
+              <strong className="flex items-center gap-2">
+                <Badge variant={entry.kind === "error" ? "destructive" : entry.kind === "transfer" ? "secondary" : "outline"}>
+                  {entry.kind}
+                </Badge>
+                <span>{entry.title}</span>
+              </strong>
               <span>{formatTimestamp(entry.timestamp)}</span>
             </article>
           ))}
-        </div>
+        </CardContent>
       )}
-    </section>
+    </Card>
   );
 }

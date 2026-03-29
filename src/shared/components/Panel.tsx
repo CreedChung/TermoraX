@@ -1,4 +1,6 @@
 import type { PropsWithChildren, ReactNode } from "react";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
 
 interface PanelProps extends PropsWithChildren {
   title: string;
@@ -9,15 +11,18 @@ interface PanelProps extends PropsWithChildren {
 
 export function Panel({ title, subtitle, actions, className, children }: PanelProps) {
   return (
-    <section className={["panel", className].filter(Boolean).join(" ")}>
-      <header className="panel__header">
+    <Card className={cn("panel border border-app-border bg-app-surface/90 text-app-text shadow-none", className)}>
+      <CardHeader className="panel__header flex flex-row items-start justify-between gap-4">
         <div>
           <p className="panel__eyebrow">{title}</p>
-          {subtitle ? <h2 className="panel__title">{subtitle}</h2> : null}
+          {subtitle ? <CardTitle className="panel__title">{subtitle}</CardTitle> : null}
         </div>
         {actions ? <div className="panel__actions">{actions}</div> : null}
-      </header>
-      <div className="panel__body">{children}</div>
-    </section>
+      </CardHeader>
+      <CardContent className="panel__body">
+        {!subtitle ? <CardDescription className="sr-only">{title}</CardDescription> : null}
+        {children}
+      </CardContent>
+    </Card>
   );
 }

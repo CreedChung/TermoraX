@@ -35,6 +35,7 @@ import { t } from "../shared/i18n";
 import { debugLog } from "../shared/lib/debug";
 import { applySessionOutputEvents, applySessionSnapshotOutputs } from "./sessionOutputStore";
 import { mergeSessionEventMetadata } from "./sessionEvents";
+import { useThemeStore } from "../features/settings/model/themeStore";
 
 export interface CommandHistoryEntry {
   id: string;
@@ -543,9 +544,18 @@ export function useWorkspaceApp() {
     startTransition(() => {
       setState((current) => {
         const normalizedSnapshot = normalizeBootstrapState(snapshot);
+        // Use zustand persisted theme if available, otherwise use backend theme
+        const persistedTheme = useThemeStore.getState().theme;
         const mergedSnapshot = {
           ...normalizedSnapshot,
           sessions: mergeSnapshotSessions(current.sessions, normalizedSnapshot.sessions),
+          settings: {
+            ...normalizedSnapshot.settings,
+            terminal: {
+              ...normalizedSnapshot.settings.terminal,
+              theme: persistedTheme ?? normalizedSnapshot.settings.terminal.theme,
+            },
+          },
         };
         const nextSelection = deriveNextSelection(
           mergedSnapshot,
@@ -1334,6 +1344,9 @@ export function useWorkspaceApp() {
       );
     },
     async updateTheme(theme: ThemeId) {
+      // Persist to zustand store for immediate local persistence
+      useThemeStore.getState().setTheme(theme);
+      // Also save to backend for cross-device sync
       await runMutation(() =>
         desktopClient.saveSettings({
           ...state.settings,
