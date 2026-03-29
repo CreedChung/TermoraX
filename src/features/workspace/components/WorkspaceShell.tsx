@@ -2,23 +2,59 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type CSSProperties,
-  type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Kbd } from "@/components/ui/kbd";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
+  Tabs,
+  TabsList,
+  TabsTrigger,
+} from "@/components/ui/tabs";
+import {
+  CommandMenu,
+  CommandMenuContent,
+  CommandMenuInput,
+  CommandMenuList,
+  CommandMenuGroup,
+  CommandMenuItem,
+  CommandMenuSeparator,
+  CommandMenuEmpty,
+  useCommandMenuShortcut,
+} from "@/components/ui/command-menu";
 import type { WorkspaceController } from "../../../app/useWorkspaceApp";
-import type { ThemeId, TrustedHost } from "../../../entities/domain";
+import type { TrustedHost } from "../../../entities/domain";
 import { ConnectionSidebar } from "../../connections/components/ConnectionSidebar";
 import { getThemeDefinition } from "../../settings/model/themes";
+import { useThemeStore } from "../../settings/model/themeStore";
+import { SettingsDialog } from "../../settings/components/SettingsDialog";
 import { SnippetPanel } from "../../snippets/components/SnippetPanel";
 import { FilePanel } from "../../sftp/components/FilePanel";
 import { TransferPanel } from "../../transfers/components/TransferPanel";
 import { TerminalWorkspace } from "../../terminal/components/TerminalWorkspace";
-import { getLocaleState, t } from "../../../shared/i18n";
+import { t } from "../../../shared/i18n";
 import { formatTimestamp } from "../../../shared/lib/time";
+import { useWindowSize, useBreakpointDown } from "../../../shared/hooks";
 import { HistoryPanel } from "./HistoryPanel";
 import { LogPanel } from "./LogPanel";
+import { Plus, PanelLeft, PanelBottom, Folder, Code, History, FileText, Shield, Columns, XSquare, Settings, Wrench, Upload, ChevronDown } from "lucide-react";
 
 interface WorkspaceShellProps {
   controller: WorkspaceController;
@@ -28,6 +64,7 @@ interface CommandPaletteAction {
   id: string;
   title: string;
   keywords: string;
+  icon?: React.ReactNode;
   onSelect: () => void;
 }
 
@@ -36,18 +73,23 @@ const MAX_LEFT_PANE_WIDTH = 320;
 const MIN_BOTTOM_PANE_HEIGHT = 120;
 const MAX_BOTTOM_PANE_HEIGHT = 520;
 
-function clampLeftPaneWidth(value: number): number {
-  return Math.min(Math.max(value, MIN_LEFT_PANE_WIDTH), MAX_LEFT_PANE_WIDTH);
-}
-
 function clampBottomPaneHeight(value: number): number {
   return Math.min(Math.max(value, MIN_BOTTOM_PANE_HEIGHT), MAX_BOTTOM_PANE_HEIGHT);
 }
 
 export function WorkspaceShell({ controller }: WorkspaceShellProps) {
   const { state, activeSession } = controller;
-  const localeState = getLocaleState();
-  const themeDefinition = getThemeDefinition(state.settings.terminal.theme);
+  // Responsive layout hooks
+  const { width: windowWidth, height: windowHeight } = useWindowSize();
+  const isCompactView = useBreakpointDown("lg");
+
+  // Adjust min pane width based on viewport size for responsive behavior
+  const dynamicMinLeftPaneWidth = isCompactView ? 180 : MIN_LEFT_PANE_WIDTH;
+
+  // Use zustand persisted theme for immediate consistency across reloads
+  const persistedTheme = useThemeStore((s) => s.theme);
+  const effectiveTheme = persistedTheme ?? state.settings.terminal.theme;
+  const themeDefinition = getThemeDefinition(effectiveTheme);
   const runningTransfers = state.transfers.filter((task) => task.status === "running").length;
   const [leftPaneWidth, setLeftPaneWidth] = useState(state.settings.workspace.leftPaneWidth);
   const [bottomPaneHeight, setBottomPaneHeight] = useState(state.settings.workspace.bottomPaneHeight);
@@ -55,8 +97,18 @@ export function WorkspaceShell({ controller }: WorkspaceShellProps) {
   const [createRequestKey, setCreateRequestKey] = useState(0);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [commandQuery, setCommandQuery] = useState("");
-  const [selectedCommandIndex, setSelectedCommandIndex] = useState(0);
   const [trustedHostsOpen, setTrustedHostsOpen] = useState(false);
+  const [hostVerificationOpen, setHostVerificationOpen] = useState(false);
+
+  // Auto-open host verification dialog when pendingHostVerification exists
+  useEffect(() => {
+    if (state.pendingHostVerification) {
+      setHostVerificationOpen(true);
+    }
+  }, [state.pendingHostVerification]);
+
+  // Global keyboard shortcut for command menu (Cmd/Ctrl+K)
+  useCommandMenuShortcut(() => setCommandPaletteOpen(true));
 
   useEffect(() => {
     setLeftPaneWidth(state.settings.workspace.leftPaneWidth);
@@ -65,6 +117,58 @@ export function WorkspaceShell({ controller }: WorkspaceShellProps) {
   useEffect(() => {
     setBottomPaneHeight(state.settings.workspace.bottomPaneHeight);
   }, [state.settings.workspace.bottomPaneHeight]);
+
+  // Responsive: Ensure pane sizes stay within window bounds when viewport changes
+  useEffect(() => {
+    if (windowWidth === 0) return;
+
+    // Ensure left pane doesn't exceed window width
+    const maxSafeWidth = Math.min(leftPaneWidth, windowWidth * 0.5);
+    if (maxSafeWidth < leftPaneWidth) {
+      setLeftPaneWidth(Math.max(maxSafeWidth, dynamicMinLeftPaneWidth));
+    }
+
+    // Ensure bottom pane doesn't exceed window height
+    const maxSafeHeight = Math.min(bottomPaneHeight, windowHeight * 0.6);
+    if (maxSafeHeight < bottomPaneHeight) {
+      setBottomPaneHeight(Math.max(maxSafeHeight, MIN_BOTTOM_PANE_HEIGHT));
+    }
+  }, [windowWidth, windowHeight, leftPaneWidth, bottomPaneHeight, dynamicMinLeftPaneWidth]);
+
+  // Threshold for auto-collapsing sidebar when window is too small
+  const AUTO_COLLAPSE_THRESHOLD = 1000;
+  const autoCollapsedRef = useRef(false);
+
+  // Auto-collapse sidebar when window becomes too small
+  useEffect(() => {
+    if (windowWidth === 0) return;
+
+    const isTooSmall = windowWidth < AUTO_COLLAPSE_THRESHOLD;
+    const isSidebarVisible = state.settings.workspace.leftPaneVisible;
+
+    if (isTooSmall && isSidebarVisible && !autoCollapsedRef.current) {
+      // Auto-collapse sidebar
+      void controller.toggleLeftPane();
+      autoCollapsedRef.current = true;
+    } else if (!isTooSmall && !isSidebarVisible && autoCollapsedRef.current) {
+      // Auto-expand sidebar when window becomes large enough again
+      void controller.toggleLeftPane();
+      autoCollapsedRef.current = false;
+    } else if (!isTooSmall) {
+      // Reset the flag when window is large enough
+      autoCollapsedRef.current = false;
+    }
+  }, [windowWidth, state.settings.workspace.leftPaneVisible, controller]);
+
+  // Sync theme CSS variables to document.documentElement so Portal-based components (like Dialog) inherit them
+  useEffect(() => {
+    const root = document.documentElement;
+    Object.entries(themeDefinition.variables).forEach(([key, value]) => {
+      if (value) {
+        root.style.setProperty(key, value);
+      }
+    });
+  }, [themeDefinition]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -108,7 +212,7 @@ export function WorkspaceShell({ controller }: WorkspaceShellProps) {
       let nextWidth = startWidth;
 
       const onMove = (moveEvent: PointerEvent) => {
-        nextWidth = clampLeftPaneWidth(startWidth + moveEvent.clientX - startX);
+        nextWidth = Math.min(Math.max(startWidth + moveEvent.clientX - startX, dynamicMinLeftPaneWidth), MAX_LEFT_PANE_WIDTH);
         setLeftPaneWidth(nextWidth);
       };
 
@@ -156,7 +260,6 @@ export function WorkspaceShell({ controller }: WorkspaceShellProps) {
   function closeCommandPalette() {
     setCommandPaletteOpen(false);
     setCommandQuery("");
-    setSelectedCommandIndex(0);
   }
 
   function openCommandPalette() {
@@ -178,48 +281,56 @@ export function WorkspaceShell({ controller }: WorkspaceShellProps) {
         id: "workspace.new-connection",
         title: t("toolbar.newConnection"),
         keywords: "connection new create ssh",
+        icon: <Plus size={16} />,
         onSelect: () => openConnectionEditor(),
       },
       {
         id: "workspace.toggle-sidebar",
         title: t("toolbar.toggleSidebar"),
         keywords: "sidebar pane left",
+        icon: <PanelLeft size={16} />,
         onSelect: () => void controller.toggleLeftPane(),
       },
       {
         id: "workspace.toggle-tools",
         title: t("toolbar.toggleTools"),
         keywords: "bottom panel tools",
+        icon: <PanelBottom size={16} />,
         onSelect: () => void controller.toggleBottomPanel(),
       },
       {
         id: "workspace.bottom.files",
         title: t("workspace.action.files"),
         keywords: "files sftp transfer",
+        icon: <Folder size={16} />,
         onSelect: () => void controller.selectBottomPanel("files"),
       },
       {
         id: "workspace.bottom.snippets",
         title: t("workspace.action.snippets"),
         keywords: "snippets command",
+        icon: <Code size={16} />,
         onSelect: () => void controller.selectBottomPanel("snippets"),
       },
       {
         id: "workspace.bottom.history",
         title: t("workspace.action.history"),
         keywords: "history commands",
+        icon: <History size={16} />,
         onSelect: () => void controller.selectBottomPanel("history"),
       },
       {
         id: "workspace.bottom.logs",
         title: t("workspace.action.logs"),
         keywords: "logs activity",
+        icon: <FileText size={16} />,
         onSelect: () => void controller.selectBottomPanel("logs"),
       },
       {
         id: "workspace.trusted-hosts",
         title: t("trustedHosts.title"),
         keywords: "trusted hosts fingerprint ssh security",
+        icon: <Shield size={16} />,
         onSelect: () => setTrustedHostsOpen(true),
       },
     ];
@@ -230,12 +341,14 @@ export function WorkspaceShell({ controller }: WorkspaceShellProps) {
           id: "terminal.split-vertical",
           title: t("terminal.splitVertical"),
           keywords: "terminal split vertical pane",
+          icon: <Columns size={16} />,
           onSelect: () => void controller.splitTerminal("vertical"),
         },
         {
           id: "terminal.split-horizontal",
           title: t("terminal.splitHorizontal"),
           keywords: "terminal split horizontal pane",
+          icon: <Columns size={16} className="rotate-90" />,
           onSelect: () => void controller.splitTerminal("horizontal"),
         },
         {
@@ -245,6 +358,7 @@ export function WorkspaceShell({ controller }: WorkspaceShellProps) {
               ? t("terminal.closeSession")
               : t("terminal.closePane"),
           keywords: "terminal close pane session",
+          icon: <XSquare size={16} />,
           onSelect: () => void controller.closeActiveTerminalPane(),
         },
       );
@@ -305,10 +419,6 @@ export function WorkspaceShell({ controller }: WorkspaceShellProps) {
     );
   }, [commandPaletteActions, commandQuery]);
 
-  useEffect(() => {
-    setSelectedCommandIndex((current) => Math.min(current, Math.max(filteredActions.length - 1, 0)));
-  }, [filteredActions.length]);
-
   function executeCommandAction(action: CommandPaletteAction | undefined) {
     if (!action) {
       return;
@@ -318,122 +428,103 @@ export function WorkspaceShell({ controller }: WorkspaceShellProps) {
     action.onSelect();
   }
 
-  function handleCommandPaletteKeyDown(event: ReactKeyboardEvent<HTMLInputElement>) {
-    if (event.key === "ArrowDown") {
-      event.preventDefault();
-      setSelectedCommandIndex((current) => Math.min(current + 1, Math.max(filteredActions.length - 1, 0)));
-      return;
-    }
+  // Group actions for CommandMenu
+  const generalActions = useMemo(() => 
+    commandPaletteActions.filter(a => 
+      !a.id.startsWith("connection.") && 
+      !a.id.startsWith("terminal.split")
+    ), [commandPaletteActions]);
 
-    if (event.key === "ArrowUp") {
-      event.preventDefault();
-      setSelectedCommandIndex((current) => Math.max(current - 1, 0));
-      return;
-    }
+  const terminalActions = useMemo(() => 
+    commandPaletteActions.filter(a => 
+      a.id.startsWith("terminal.")
+    ), [commandPaletteActions]);
 
-    if (event.key === "Enter") {
-      event.preventDefault();
-      executeCommandAction(filteredActions[selectedCommandIndex]);
-      return;
-    }
-
-    if (event.key === "Escape") {
-      event.preventDefault();
-      closeCommandPalette();
-    }
-  }
+  const connectionActions = useMemo(() => 
+    commandPaletteActions.filter(a => 
+      a.id.startsWith("connection.")
+    ), [commandPaletteActions]);
 
   return (
     <div className="workspace-shell" style={toolbarStyle}>
       <header className="workspace-toolbar">
-        <div className="button-row workspace-toolbar__left">
-          <button
-            className="ghost-button toolbar-button"
-            onClick={openConnectionEditor}
-            type="button"
+        <div className="workspace-toolbar__left">
+          <Tooltip>
+            <TooltipTrigger>
+              <Button
+                aria-pressed={state.settings.workspace.leftPaneVisible}
+                onClick={() => void controller.toggleLeftPane()}
+                type="button"
+                variant={state.settings.workspace.leftPaneVisible ? "secondary" : "ghost"}
+                size="icon"
+              >
+                <PanelLeft size={18} />
+                <span className="sr-only">{t("toolbar.toggleSidebar")}</span>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">{t("toolbar.toggleSidebar")}</TooltipContent>
+          </Tooltip>
+        </div>
+
+        <div className="workspace-toolbar__center">
+          <div 
+            className="workspace-toolbar__search-container flex items-center gap-2 px-3 py-1.5 rounded-md border border-app-border bg-black/20 text-app-text cursor-pointer hover:bg-black/30 transition-colors"
+            onClick={openCommandPalette}
           >
-            {t("toolbar.newConnection")}
-          </button>
-          <button
-            className="ghost-button toolbar-button"
-            onClick={openConnectionEditor}
-            type="button"
-          >
-            {t("toolbar.quickConnect")}
-          </button>
-          <input
-            aria-label={t("toolbar.commandPalette")}
-            className="workspace-toolbar__search"
-            onChange={(event) => {
-              setCommandQuery(event.target.value);
-              setCommandPaletteOpen(true);
-            }}
-            onFocus={openCommandPalette}
-            onKeyDown={handleCommandPaletteKeyDown}
-            placeholder={t("toolbar.commandPalette")}
-            value={commandPaletteOpen ? commandQuery : ""}
-          />
+            <span className="text-muted-foreground text-sm flex-1">
+              {t("toolbar.commandPalette")}
+            </span>
+            <div className="flex items-center gap-1">
+              <Kbd size="xs">{typeof navigator !== 'undefined' && navigator.platform.toUpperCase().indexOf('MAC') >= 0 ? '⌘' : 'Ctrl'}</Kbd>
+              <Kbd size="xs">K</Kbd>
+            </div>
+          </div>
         </div>
 
         <div className="button-row workspace-toolbar__right">
-          <button
-            className="ghost-button toolbar-button"
-            aria-pressed={state.settings.workspace.leftPaneVisible}
-            onClick={() => void controller.toggleLeftPane()}
-            type="button"
-          >
-            {t("toolbar.toggleSidebar")}
-          </button>
-          <button
-            className="ghost-button toolbar-button"
-            aria-pressed={state.settings.workspace.bottomPaneVisible}
-            onClick={() => void controller.toggleBottomPanel()}
-            type="button"
-          >
-            {t("toolbar.toggleTools")}
-          </button>
           <div className="workspace-toolbar__settings">
-            <button
-              className="ghost-button toolbar-button"
-              onClick={() => setSettingsOpen((current) => !current)}
-              type="button"
-            >
-              {t("toolbar.settings")}
-            </button>
-            {settingsOpen ? (
-              <div className="workspace-toolbar__settings-menu">
-                <label>
-                  <span>{t("terminal.themeLabel")}</span>
-                  <select
-                    aria-label={t("terminal.themeLabel")}
-                    onChange={(event) => void controller.updateTheme(event.target.value as ThemeId)}
-                    value={state.settings.terminal.theme}
-                  >
-                    <option value="midnight">{t("workspace.theme.midnight")}</option>
-                    <option value="sand">{t("workspace.theme.sand")}</option>
-                    <option value="jade">{t("workspace.theme.jade")}</option>
-                    <option value="tide">{t("workspace.theme.tide")}</option>
-                    <option value="graphite">{t("workspace.theme.graphite")}</option>
-                  </select>
-                </label>
-                <button className="ghost-button toolbar-button" onClick={() => void controller.resetSettings()} type="button">
-                  {t("workspace.action.resetSettings")}
-                </button>
-                <button className="ghost-button toolbar-button" onClick={() => setTrustedHostsOpen(true)} type="button">
-                  {t("trustedHosts.title")}
-                </button>
-                {localeState.hasPendingLocaleHook ? (
-                  <span className="workspace-toolbar__locale-hint">
-                    {t("locale.pendingHook", { locale: localeState.systemLocale })}
-                  </span>
-                ) : null}
-              </div>
-            ) : null}
+            <Tooltip>
+              <TooltipTrigger>
+                <Button onClick={() => setSettingsOpen(true)} type="button" variant="ghost" size="icon">
+                  <Settings size={18} />
+                  <span className="sr-only">{t("toolbar.settings")}</span>
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">{t("toolbar.settings")}</TooltipContent>
+            </Tooltip>
+            <SettingsDialog
+              open={settingsOpen}
+              onOpenChange={setSettingsOpen}
+              controller={controller}
+              onTrustedHostsClick={() => {
+                setSettingsOpen(false);
+                setTrustedHostsOpen(true);
+              }}
+            />
           </div>
+          <Tooltip>
+            <TooltipTrigger>
+              <Button
+                aria-pressed={state.settings.workspace.bottomPaneVisible}
+                onClick={() => void controller.toggleBottomPanel()}
+                type="button"
+                variant={state.settings.workspace.bottomPaneVisible ? "secondary" : "ghost"}
+                size="icon"
+              >
+                <Wrench size={18} />
+                <span className="sr-only">{t("toolbar.toggleTools")}</span>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">{t("toolbar.toggleTools")}</TooltipContent>
+          </Tooltip>
         </div>
       </header>
 
-      {state.error ? <div className="error-banner">{state.error}</div> : null}
+      {state.error ? (
+        <Alert className="mx-5 mt-3 border-app-border bg-app-surface-alt/70" variant="destructive">
+          <AlertDescription>{state.error}</AlertDescription>
+        </Alert>
+      ) : null}
 
       <div className="workspace-layout">
         {state.settings.workspace.leftPaneVisible ? (
@@ -466,44 +557,69 @@ export function WorkspaceShell({ controller }: WorkspaceShellProps) {
               <section className="workspace-bottom-pane" style={{ height: `${bottomPaneHeight}px` }}>
                 <div className="workspace-tools">
                   <div className="workspace-tools__header">
-                    <div className="workspace-tools__tabs" role="tablist">
-                      {(["files", "snippets", "history", "logs"] as const).map((panelId) => (
-                        <button
-                          aria-selected={state.settings.workspace.bottomPane === panelId}
-                          className={`workspace-tools__tab ${
-                            state.settings.workspace.bottomPane === panelId ? "is-active" : ""
-                          }`}
-                          key={panelId}
-                          onClick={() => handleBottomPaneTabSelect(panelId)}
-                          role="tab"
-                          type="button"
-                        >
-                          <span>{t(`workspace.action.${panelId}`)}</span>
-                          {panelId === "files" && runningTransfers > 0 ? (
-                            <span className="workspace-tools__badge">{runningTransfers}</span>
-                          ) : null}
-                        </button>
+                    <Tabs
+                      value={state.settings.workspace.bottomPane}
+                      onValueChange={(value) => handleBottomPaneTabSelect(value as "files" | "snippets" | "history" | "logs")}
+                      className="workspace-tools__tabs"
+                    >
+                    <TabsList>
+                      {([
+                        { id: "files", icon: Folder, label: t("workspace.action.files") },
+                        { id: "snippets", icon: Code, label: t("workspace.action.snippets") },
+                        { id: "history", icon: History, label: t("workspace.action.history") },
+                        { id: "logs", icon: FileText, label: t("workspace.action.logs") },
+                      ] as const).map(({ id: panelId, icon: Icon, label }) => (
+                        <Tooltip key={panelId}>
+                          <TooltipTrigger>
+                            <TabsTrigger value={panelId}>
+                              <Icon className="h-4 w-4" />
+                              <span className="sr-only">{label}</span>
+                              {panelId === "files" && runningTransfers > 0 ? (
+                                <Badge className="ml-1" variant="secondary">
+                                  {runningTransfers}
+                                </Badge>
+                              ) : null}
+                            </TabsTrigger>
+                          </TooltipTrigger>
+                          <TooltipContent side="top">{label}</TooltipContent>
+                        </Tooltip>
                       ))}
-                    </div>
+                    </TabsList>
+                    </Tabs>
                     <div className="button-row workspace-tools__actions">
-                      <button
-                        className="ghost-button toolbar-button"
-                        disabled={!activeSession}
-                        onClick={() => {
-                          void controller.selectBottomPanel("files");
-                          void controller.uploadFileToCurrentDirectory();
-                        }}
-                        type="button"
-                      >
-                        {t("toolbar.upload")}
-                      </button>
-                      <button
-                        className="ghost-button toolbar-button workspace-tools__close"
-                        onClick={() => void controller.toggleBottomPanel()}
-                        type="button"
-                      >
-                        {t("terminal.toggleBottomPanel")}
-                      </button>
+                      <Tooltip>
+                        <TooltipTrigger>
+                          <Button
+                            disabled={!activeSession}
+                            onClick={() => {
+                              void controller.selectBottomPanel("files");
+                              void controller.uploadFileToCurrentDirectory();
+                            }}
+                            type="button"
+                            variant="outline"
+                            size="icon-sm"
+                          >
+                            <Upload className="h-4 w-4" />
+                            <span className="sr-only">{t("toolbar.upload")}</span>
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent side="top">{t("toolbar.upload")}</TooltipContent>
+                      </Tooltip>
+                      <Tooltip>
+                        <TooltipTrigger>
+                          <Button
+                            className="workspace-tools__close"
+                            onClick={() => void controller.toggleBottomPanel()}
+                            type="button"
+                            variant="ghost"
+                            size="icon-sm"
+                          >
+                            <ChevronDown className="h-4 w-4" />
+                            <span className="sr-only">{t("terminal.toggleBottomPanel")}</span>
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent side="top">{t("terminal.toggleBottomPanel")}</TooltipContent>
+                      </Tooltip>
                     </div>
                   </div>
 
@@ -553,59 +669,75 @@ export function WorkspaceShell({ controller }: WorkspaceShellProps) {
         </main>
       </div>
 
-      {commandPaletteOpen ? (
-        <div className="workspace-dialog-overlay" onClick={closeCommandPalette}>
-          <div
-            className="workspace-dialog command-palette"
-            onClick={(event) => event.stopPropagation()}
-            role="dialog"
-          >
-            <header className="command-palette__header">
-              <strong>{t("toolbar.commandPalette")}</strong>
-              <input
-                autoFocus
-                className="workspace-toolbar__search"
-                onChange={(event) => setCommandQuery(event.target.value)}
-                onKeyDown={handleCommandPaletteKeyDown}
-                placeholder={t("toolbar.commandPalette")}
-                value={commandQuery}
-              />
-            </header>
-            <div className="command-palette__list">
-              {filteredActions.length === 0 ? (
-                <div className="empty-panel">
-                  <p>{t("commandPalette.empty")}</p>
-                </div>
-              ) : (
-                filteredActions.map((action, index) => (
-                  <button
-                    className={`command-palette__item ${index === selectedCommandIndex ? "is-active" : ""}`}
-                    key={action.id}
-                    onClick={() => executeCommandAction(action)}
-                    onMouseEnter={() => setSelectedCommandIndex(index)}
-                    type="button"
-                  >
-                    {action.title}
-                  </button>
-                ))
-              )}
-            </div>
-          </div>
-        </div>
-      ) : null}
+      <CommandMenu open={commandPaletteOpen} onOpenChange={(open) => (open ? openCommandPalette() : closeCommandPalette())}>
+        <CommandMenuContent>
+          <CommandMenuInput placeholder={t("toolbar.commandPalette")} showShortcut={true} />
+          <CommandMenuList maxHeight="400px">
+            {filteredActions.length === 0 ? (
+              <CommandMenuEmpty>{t("commandPalette.empty")}</CommandMenuEmpty>
+            ) : (
+              <>
+                {generalActions.length > 0 && (
+                  <CommandMenuGroup heading={t("commandPalette.general")}>
+                    {generalActions.map((action, index) => (
+                      <CommandMenuItem
+                        key={action.id}
+                        index={index}
+                        icon={action.icon}
+                        onSelect={() => executeCommandAction(action)}
+                      >
+                        {action.title}
+                      </CommandMenuItem>
+                    ))}
+                  </CommandMenuGroup>
+                )}
+                {terminalActions.length > 0 && generalActions.length > 0 && <CommandMenuSeparator />}
+                {terminalActions.length > 0 && (
+                  <CommandMenuGroup heading={t("commandPalette.terminal")}>
+                    {terminalActions.map((action, index) => (
+                      <CommandMenuItem
+                        key={action.id}
+                        index={index + generalActions.length}
+                        icon={action.icon}
+                        onSelect={() => executeCommandAction(action)}
+                      >
+                        {action.title}
+                      </CommandMenuItem>
+                    ))}
+                  </CommandMenuGroup>
+                )}
+                {connectionActions.length > 0 && (generalActions.length > 0 || terminalActions.length > 0) && <CommandMenuSeparator />}
+                {connectionActions.length > 0 && (
+                  <CommandMenuGroup heading={t("commandPalette.connections")}>
+                    {connectionActions.map((action, index) => (
+                      <CommandMenuItem
+                        key={action.id}
+                        index={index + generalActions.length + terminalActions.length}
+                        icon={action.icon}
+                        onSelect={() => executeCommandAction(action)}
+                      >
+                        {action.title}
+                      </CommandMenuItem>
+                    ))}
+                  </CommandMenuGroup>
+                )}
+              </>
+            )}
+          </CommandMenuList>
+        </CommandMenuContent>
+      </CommandMenu>
 
-      {trustedHostsOpen ? (
-        <div className="workspace-dialog-overlay" onClick={() => setTrustedHostsOpen(false)}>
-          <div className="workspace-dialog trusted-hosts-dialog" onClick={(event) => event.stopPropagation()} role="dialog">
-            <header className="trusted-hosts-dialog__header">
+      <Dialog open={trustedHostsOpen} onOpenChange={setTrustedHostsOpen}>
+        <DialogContent className="workspace-dialog trusted-hosts-dialog border border-app-border bg-app-surface text-app-text sm:max-w-2xl">
+            <DialogHeader className="trusted-hosts-dialog__header">
               <div>
-                <strong>{t("trustedHosts.title")}</strong>
-                <span>{t("trustedHosts.subtitle", { count: state.trustedHosts.length })}</span>
+                <DialogTitle>{t("trustedHosts.title")}</DialogTitle>
+                <DialogDescription>{t("trustedHosts.subtitle", { count: state.trustedHosts.length })}</DialogDescription>
               </div>
-              <button className="ghost-button toolbar-button" onClick={() => setTrustedHostsOpen(false)} type="button">
+              <Button onClick={() => setTrustedHostsOpen(false)} type="button" variant="ghost" size="sm">
                 {t("trustedHosts.close")}
-              </button>
-            </header>
+              </Button>
+            </DialogHeader>
             <div className="trusted-hosts-dialog__list">
               {state.trustedHosts.length === 0 ? (
                 <div className="empty-panel">
@@ -621,9 +753,79 @@ export function WorkspaceShell({ controller }: WorkspaceShellProps) {
                 ))
               )}
             </div>
-          </div>
-        </div>
-      ) : null}
+        </DialogContent>
+      </Dialog>
+
+      {/* Host Fingerprint Verification Dialog */}
+      <Dialog open={hostVerificationOpen} onOpenChange={(open) => {
+        if (!open) {
+          controller.dismissPendingHostVerification();
+        }
+        setHostVerificationOpen(open);
+      }}>
+        <DialogContent className="workspace-dialog host-verification-dialog border border-app-border bg-app-surface text-app-text sm:max-w-xl">
+          <DialogHeader className="host-verification-dialog__header">
+            <DialogTitle>{t("connections.hostInspectionTitle")}</DialogTitle>
+            <DialogDescription>
+              {state.pendingHostVerification && (
+                <>
+                  {t("connections.hostInspectionMessage", {
+                    host: state.pendingHostVerification.host,
+                    port: state.pendingHostVerification.port,
+                    algorithm: state.pendingHostVerification.algorithm,
+                  })}
+                </>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          {state.pendingHostVerification && (
+            <div className="host-verification-dialog__content space-y-4">
+              <Alert className="host-verification-panel border-app-border bg-app-surface-alt/70">
+                <AlertDescription className="space-y-3">
+                  <p className="host-verification-panel__fingerprint font-mono text-sm break-all">
+                    <strong>{t("connections.hostVerification.fingerprint")}:</strong> {state.pendingHostVerification.fingerprint}
+                  </p>
+                  {state.lastHostInspection?.trustStatus === "mismatch" && (
+                    <Alert className="border-app-border bg-app-surface-soft/70" variant="destructive">
+                      <AlertDescription>
+                        {t("connections.hostVerification.mismatchBody")}
+                        {state.lastHostInspection?.trustedFingerprint && (
+                          <p className="mt-1 font-mono text-xs">
+                            {t("connections.hostInspectionTrustedFingerprint", {
+                              fingerprint: state.lastHostInspection.trustedFingerprint,
+                            })}
+                          </p>
+                        )}
+                      </AlertDescription>
+                    </Alert>
+                  )}
+                  <Alert className="border-app-border bg-app-surface-soft/70">
+                    <AlertDescription>{t("connections.hostInspectionWarning")}</AlertDescription>
+                  </Alert>
+                </AlertDescription>
+              </Alert>
+              <div className="flex justify-end gap-2">
+                <Button
+                  onClick={() => void controller.trustPendingHost()}
+                  type="button"
+                >
+                  {t("connections.hostInspectionTrust")}
+                </Button>
+                <Button
+                  onClick={() => {
+                    controller.dismissPendingHostVerification();
+                    setHostVerificationOpen(false);
+                  }}
+                  type="button"
+                  variant="outline"
+                >
+                  {t("connections.hostInspectionCancel")}
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -639,13 +841,13 @@ function TrustedHostRow({
     <article className="trusted-host-row">
       <div className="trusted-host-row__summary">
         <strong>{`${host.host}:${host.port}`}</strong>
-        <span>{host.algorithm}</span>
+        <Badge variant="outline">{host.algorithm}</Badge>
         <code>{host.fingerprint}</code>
         <span>{t("trustedHosts.trustedAt", { time: formatTimestamp(host.trustedAt) })}</span>
       </div>
-      <button className="danger-button toolbar-button" onClick={onDelete} type="button">
+      <Button onClick={onDelete} type="button" variant="destructive" size="sm">
         {t("trustedHosts.delete")}
-      </button>
+      </Button>
     </article>
   );
 }

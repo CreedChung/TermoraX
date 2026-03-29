@@ -1,3 +1,4 @@
+import { Badge } from "@/components/ui/badge";
 import type { SessionStatus } from "../../entities/domain";
 import { t } from "../i18n";
 
@@ -6,5 +7,19 @@ interface StatusBadgeProps {
 }
 
 export function StatusBadge({ status }: StatusBadgeProps) {
-  return <span className={`status-badge status-badge--${status}`}>{t(`status.${status}`)}</span>;
+  const variant = (() => {
+    switch (status) {
+      case "connected":
+        return "secondary";
+      case "connecting":
+      case "idle":
+        return "outline";
+      case "disconnected":
+        return "destructive";
+      default:
+        return "outline";
+    }
+  })();
+
+  return <Badge variant={variant}>{t(`status.${status}`)}</Badge>;
 }

@@ -1,4 +1,11 @@
 import { useEffect, useMemo, useRef, type MutableRefObject } from "react";
+import { Copy, ClipboardPaste, RefreshCw, Eraser, X, PanelLeft, PanelRight } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import type { WorkspaceController } from "../../../app/useWorkspaceApp";
 import { getSessionOutputState, subscribeSessionOutput } from "../../../app/sessionOutputStore";
 import type { SessionTab, TerminalPaneId, ThemeId } from "../../../entities/domain";
@@ -121,61 +128,115 @@ export function TerminalWorkspace({ controller }: TerminalWorkspaceProps) {
           </div>
           {state.sessions.length === 0 ? <div className="tab-strip__empty">{t("terminal.openHint")}</div> : null}
           <div className="terminal-tabs__actions">
-            <button className="ghost-button toolbar-button" onClick={handleToolbarCopy} type="button">
-              {t("terminal.copy")}
-            </button>
-            <button className="ghost-button toolbar-button" onClick={handleToolbarPaste} type="button">
-              {t("terminal.paste")}
-            </button>
-            <button
-              className="ghost-button toolbar-button"
-              disabled={!focusedSession}
-              onClick={handleReconnect}
-              type="button"
-            >
-              {t("terminal.reconnect")}
-            </button>
-            <button
-              className="ghost-button toolbar-button"
-              disabled={!focusedSession}
-              onClick={handleClearOutput}
-              type="button"
-            >
-              {t("terminal.clearOutput")}
-            </button>
-            <button
-              className="ghost-button toolbar-button"
-              disabled={!focusedSession || !hasOtherSessions}
-              onClick={handleCloseOthers}
-              title={!hasOtherSessions ? t("terminal.noOtherSessions") : undefined}
-              type="button"
-            >
-              {t("terminal.closeOthers")}
-            </button>
-            <button
-              className="ghost-button toolbar-button"
-              disabled={!focusedSession}
-              onClick={() => void controller.splitTerminal("vertical")}
-              type="button"
-            >
-              {t("terminal.splitVertical")}
-            </button>
-            <button
-              className="ghost-button toolbar-button"
-              disabled={!focusedSession}
-              onClick={() => void controller.splitTerminal("horizontal")}
-              type="button"
-            >
-              {t("terminal.splitHorizontal")}
-            </button>
-            <button
-              className="ghost-button toolbar-button"
-              disabled={!focusedSession}
-              onClick={() => void controller.closeActiveTerminalPane()}
-              type="button"
-            >
-              {splitDirection === "none" ? t("terminal.closeSession") : t("terminal.closePane")}
-            </button>
+            <Tooltip>
+              <TooltipTrigger>
+                <Button onClick={handleToolbarCopy} type="button" variant="ghost" size="icon-sm">
+                  <Copy className="h-4 w-4" />
+                  <span className="sr-only">{t("terminal.copy")}</span>
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="top">{t("terminal.copy")}</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger>
+                <Button onClick={handleToolbarPaste} type="button" variant="ghost" size="icon-sm">
+                  <ClipboardPaste className="h-4 w-4" />
+                  <span className="sr-only">{t("terminal.paste")}</span>
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="top">{t("terminal.paste")}</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger>
+                <Button
+                  disabled={!focusedSession}
+                  onClick={handleReconnect}
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                >
+                  <RefreshCw className="h-4 w-4" />
+                  <span className="sr-only">{t("terminal.reconnect")}</span>
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="top">{t("terminal.reconnect")}</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger>
+                <Button
+                  disabled={!focusedSession}
+                  onClick={handleClearOutput}
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                >
+                  <Eraser className="h-4 w-4" />
+                  <span className="sr-only">{t("terminal.clearOutput")}</span>
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="top">{t("terminal.clearOutput")}</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger>
+                <Button
+                  disabled={!focusedSession || !hasOtherSessions}
+                  onClick={handleCloseOthers}
+                  title={!hasOtherSessions ? t("terminal.noOtherSessions") : undefined}
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                >
+                  <X className="h-4 w-4" />
+                  <span className="sr-only">{t("terminal.closeOthers")}</span>
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="top">{t("terminal.closeOthers")}</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger>
+                <Button
+                  disabled={!focusedSession}
+                  onClick={() => void controller.splitTerminal("vertical")}
+                  type="button"
+                  variant="outline"
+                  size="icon-sm"
+                >
+                  <PanelLeft className="h-4 w-4" />
+                  <span className="sr-only">{t("terminal.splitVertical")}</span>
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="top">{t("terminal.splitVertical")}</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger>
+                <Button
+                  disabled={!focusedSession}
+                  onClick={() => void controller.splitTerminal("horizontal")}
+                  type="button"
+                  variant="outline"
+                  size="icon-sm"
+                >
+                  <PanelRight className="h-4 w-4 rotate-90" />
+                  <span className="sr-only">{t("terminal.splitHorizontal")}</span>
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="top">{t("terminal.splitHorizontal")}</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger>
+                <Button
+                  disabled={!focusedSession}
+                  onClick={() => void controller.closeActiveTerminalPane()}
+                  type="button"
+                  variant="secondary"
+                  size="icon-sm"
+                >
+                  <X className="h-4 w-4" />
+                  <span className="sr-only">{splitDirection === "none" ? t("terminal.closeSession") : t("terminal.closePane")}</span>
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="top">{splitDirection === "none" ? t("terminal.closeSession") : t("terminal.closePane")}</TooltipContent>
+            </Tooltip>
           </div>
         </div>
 
@@ -258,13 +319,14 @@ function TerminalPane({
         </div>
         <div className="terminal-pane__meta">
           <StatusBadge status={session.status} />
-          <button
-            className="ghost-button toolbar-button"
+          <Button
             onClick={() => void controller.focusTerminalPane(paneId)}
             type="button"
+            variant={isActive ? "secondary" : "ghost"}
+            size="sm"
           >
             {isActive ? t("terminal.pane.active") : t("terminal.pane.focus")}
-          </button>
+          </Button>
         </div>
       </header>
       <div className="terminal-host">

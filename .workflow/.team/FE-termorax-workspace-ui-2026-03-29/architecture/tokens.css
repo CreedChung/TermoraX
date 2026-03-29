@@ -1,0 +1,257 @@
+/**
+ * TermoraX Design Tokens - CSS Variables
+ * Generated for Tailwind v4 + shadcn/ui integration
+ * 
+ * Usage:
+ * - Import this file in global.css
+ * - Tokens follow semantic naming: --<category>-<variant>-<state>
+ */
+
+/* ========================================
+   BASE LAYER - Primitive Color Definitions
+   ======================================== */
+
+:root {
+  /* Background Layers */
+  --bg-primary: #101316;
+  --bg-secondary: #12171d;
+  --bg-tertiary: #1b232b;
+  
+  /* Surface Layers */
+  --surface-default: rgba(18, 23, 29, 0.95);
+  --surface-hover: rgba(40, 49, 59, 0.85);
+  --surface-active: rgba(242, 160, 92, 0.12);
+  --surface-elevated: rgba(33, 42, 52, 0.98);
+  --surface-overlay: rgba(0, 0, 0, 0.80);
+  --surface-disabled: rgba(16, 20, 24, 0.56);
+  
+  /* Text Colors */
+  --text-primary: #f5f1e8;
+  --text-secondary: #b5b0a5;
+  --text-muted: #8a8479;
+  --text-inverse: #101316;
+  --text-disabled: rgba(181, 176, 165, 0.5);
+  
+  /* Border Colors */
+  --border-default: rgba(243, 229, 207, 0.12);
+  --border-hover: rgba(243, 229, 207, 0.20);
+  --border-focus: rgba(242, 160, 92, 0.44);
+  --border-active: rgba(242, 160, 92, 0.60);
+  --border-subtle: rgba(243, 229, 207, 0.06);
+  
+  /* Accent Colors */
+  --accent-primary: #f2a05c;
+  --accent-primary-hover: #ffb078;
+  --accent-primary-active: #e08c48;
+  --accent-primary-subtle: rgba(242, 160, 92, 0.18);
+  --accent-secondary: #6fcf97;
+  --accent-danger: #ff8d7d;
+  --accent-danger-subtle: rgba(255, 141, 125, 0.16);
+  --accent-warning: #f59e0b;
+  --accent-info: #7dd3fc;
+  
+  /* State Colors */
+  --state-success: #6fcf97;
+  --state-error: #ff8d7d;
+  --state-warning: #f59e0b;
+  --state-info: #7dd3fc;
+  
+  /* Terminal Theme */
+  --terminal-bg: #0c1014;
+  --terminal-bg-sand: #efe7d9;
+  --terminal-text: #dce8d8;
+  --terminal-text-sand: #2a2418;
+  
+  /* Code Blocks */
+  --code-surface: rgba(0, 0, 0, 0.20);
+  --code-text: #f4eee4;
+
+  /* ========================================
+     TYPOGRAPHY
+     ======================================== */
+  
+  --font-sans: "Segoe UI Variable", "Noto Sans", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+  
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-base: 13px;
+  --text-lg: 14px;
+  --text-xl: 16px;
+  
+  --leading-xs: 16px;
+  --leading-sm: 18px;
+  --leading-base: 20px;
+  --leading-lg: 22px;
+  --leading-xl: 24px;
+  
+  --tracking-tight: -0.01em;
+  --tracking-normal: 0;
+  --tracking-wide: 0.01em;
+
+  /* ========================================
+     SPACING (8px grid)
+     ======================================== */
+  
+  --space-0: 0px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  /* ========================================
+     BORDERS
+     ======================================== */
+  
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-full: 9999px;
+  
+  --border-width-thin: 1px;
+  --border-width-medium: 2px;
+  --border-width-thick: 3px;
+
+  /* ========================================
+     SHADOWS (Elevation System)
+     ======================================== */
+  
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.20);
+  --shadow-md: 0 4px 8px rgba(0, 0, 0, 0.24);
+  --shadow-lg: 0 8px 16px rgba(0, 0, 0, 0.28);
+  --shadow-xl: 0 12px 24px rgba(0, 0, 0, 0.32);
+  --shadow-2xl: 0 20px 40px rgba(0, 0, 0, 0.36);
+  
+  --shadow-glow-accent: 0 0 20px rgba(242, 160, 92, 0.15);
+  --shadow-focus-ring: 0 0 0 3px rgba(242, 160, 92, 0.20);
+
+  /* ========================================
+     TRANSITIONS
+     ======================================== */
+  
+  --transition-fast: 150ms;
+  --transition-normal: 200ms;
+  --transition-slow: 300ms;
+  --transition-ease: cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* ========================================
+     Z-INDEX
+     ======================================== */
+  
+  --z-base: 0;
+  --z-dropdown: 10;
+  --z-sticky: 20;
+  --z-popover: 30;
+  --z-modal: 40;
+  --z-tooltip: 50;
+
+  /* ========================================
+     OPACITY
+     ======================================== */
+  
+  --opacity-0: 0;
+  --opacity-disabled: 0.5;
+  --opacity-subtle: 0.7;
+  --opacity-muted: 0.8;
+  --opacity-full: 1;
+}
+
+/* ========================================
+   SHADCN/UI THEME ALIGNMENT
+   Maps custom tokens to shadcn variables
+   ======================================== */
+
+:root {
+  /* shadcn/ui color mappings */
+  --ui-background: var(--bg-primary);
+  --ui-foreground: var(--text-primary);
+  
+  --ui-card: var(--surface-default);
+  --ui-card-foreground: var(--text-primary);
+  
+  --ui-popover: var(--surface-elevated);
+  --ui-popover-foreground: var(--text-primary);
+  
+  --ui-primary: var(--accent-primary);
+  --ui-primary-foreground: var(--text-inverse);
+  
+  --ui-secondary: var(--surface-hover);
+  --ui-secondary-foreground: var(--text-primary);
+  
+  --ui-muted: var(--surface-hover);
+  --ui-muted-foreground: var(--text-muted);
+  
+  --ui-accent: var(--accent-primary-subtle);
+  --ui-accent-foreground: var(--text-primary);
+  
+  --ui-destructive: var(--accent-danger);
+  --ui-destructive-foreground: var(--text-primary);
+  
+  --ui-border: var(--border-default);
+  --ui-input: var(--surface-disabled);
+  --ui-ring: var(--border-focus);
+  
+  --ui-radius: var(--radius-md);
+  
+  /* shadcn sidebar mappings */
+  --sidebar: var(--bg-secondary);
+  --sidebar-foreground: var(--text-primary);
+  --sidebar-primary: var(--accent-primary);
+  --sidebar-primary-foreground: var(--text-inverse);
+  --sidebar-accent: var(--surface-hover);
+  --sidebar-accent-foreground: var(--text-primary);
+  --sidebar-border: var(--border-default);
+  --sidebar-ring: var(--border-focus);
+}
+
+/* ========================================
+   DARK MODE (default for TermoraX)
+   ======================================== */
+
+.dark {
+  /* All tokens already defined for dark mode in :root */
+  /* This class can be used for explicit dark mode toggle */
+}
+
+/* ========================================
+   APP-SPECIFIC OVERRIDES
+   Legacy token compatibility
+   ======================================== */
+
+:root {
+  /* Legacy token compatibility - will be phased out */
+  --app-background: 
+    radial-gradient(circle at top left, rgba(242, 160, 92, 0.16), transparent 30%),
+    radial-gradient(circle at top right, rgba(48, 110, 111, 0.2), transparent 28%),
+    linear-gradient(180deg, #1b2025 0%, #101316 100%);
+  
+  --surface: var(--surface-default);
+  --surface-alt: var(--surface-hover);
+  --surface-soft: rgba(40, 49, 59, 0.7);
+  --surface-elevated: var(--surface-elevated);
+  
+  --border: var(--border-default);
+  --text: var(--text-primary);
+  --muted: var(--text-secondary);
+  --accent: var(--accent-primary);
+  --accent-soft: var(--accent-primary-subtle);
+  --success: var(--state-success);
+  --danger: var(--state-error);
+  --shadow: var(--shadow-lg);
+  
+  --input-surface: var(--surface-disabled);
+  --input-surface-disabled: rgba(16, 20, 24, 0.56);
+  --input-text: var(--text-primary);
+  --placeholder: rgba(181, 176, 165, 0.82);
+  --focus-ring: var(--shadow-focus-ring);
+  --code-surface: rgba(0, 0, 0, 0.18);
+  --code-text: var(--code-text);
+  --terminal-meta-surface: rgba(0, 0, 0, 0.16);
+  --selection-surface: rgba(242, 160, 92, 0.08);
+}
